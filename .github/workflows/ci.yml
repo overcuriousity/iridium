@@ -15,11 +15,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust (rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Install libewf dev package
+        run: sudo apt-get update -q && sudo apt-get install -y libewf-dev
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -42,9 +47,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust (rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install libewf dev package
+        run: sudo apt-get update -q && sudo apt-get install -y libewf-dev
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -56,10 +66,10 @@ jobs:
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-test-
 
-      - name: Build
+      - name: Build (workspace)
         run: cargo build
 
-      - name: Test
+      - name: Test (workspace)
         run: cargo test
 
   deny:
@@ -67,13 +77,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: EmbarkStudios/cargo-deny-action@v2
 
   musl:
-    name: Static musl build
+    # Builds only the iridium binary for x86_64-unknown-linux-musl.
+    # libewf (and its C deps) are not yet cross-compiled for musl; that is
+    # addressed in Phase 8 (Hardening).  The ewf-sys crate is not in the
+    # binary's dependency graph until Phase 4, so this remains a pure-Rust
+    # static binary for now.
+    name: Static musl build (binary only)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust + musl target
         uses: dtolnay/rust-toolchain@stable
@@ -81,7 +100,7 @@ jobs:
           targets: x86_64-unknown-linux-musl
 
       - name: Install musl toolchain
-        run: sudo apt-get install -y musl-tools
+        run: sudo apt-get update -q && sudo apt-get install -y musl-tools
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -93,11 +112,14 @@ jobs:
           key: ${{ runner.os }}-musl-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-musl-
 
-      - name: Build (musl)
-        run: cargo build --target x86_64-unknown-linux-musl
+      - name: Build iridium binary (musl)
+        # Build only the binary crate; ewf-sys is not in its dep graph yet.
+        run: cargo build --bin iridium --target x86_64-unknown-linux-musl
 
       - name: Verify static binary
         run: |
           BIN=target/x86_64-unknown-linux-musl/debug/iridium
           file "$BIN"
-          ldd "$BIN" 2>&1 | grep -q "not a dynamic executable" && echo "OK: static binary" || (ldd "$BIN"; exit 1)
+          ldd "$BIN" 2>&1 | grep -q "not a dynamic executable" \
+            && echo "OK: static binary" \
+            || (ldd "$BIN"; exit 1)

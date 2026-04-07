@@ -11,7 +11,7 @@ description = "iridium — acquisition pipeline: reader → hash fan-out → wri
 iridium-core    = { path = "../iridium-core" }
 iridium-device  = { path = "../iridium-device" }
 iridium-hash    = { path = "../iridium-hash" }
-iridium-ewf     = { path = "../iridium-ewf" }
+# iridium-ewf added in Phase 4 when the EWF writer is implemented
 iridium-audit   = { path = "../iridium-audit" }
 tokio.workspace  = true
 rayon.workspace  = true
