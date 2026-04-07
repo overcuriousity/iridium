@@ -9,6 +9,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Build tools required by the vendored libewf autotools build.
+# These are HARD dependencies — libewf is always compiled from source.
+# System packages: autoconf automake libtool gettext pkg-config zlib1g-dev
+# (uuid-dev is needed for ewftools but not for the library itself)
+
 jobs:
   check:
     name: Format & Lint
@@ -23,18 +28,30 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Install libewf dev package
-        run: sudo apt-get update -q && sudo apt-get install -y libewf-dev
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y \
+            autoconf automake libtool gettext pkg-config \
+            zlib1g-dev
 
-      - name: Cache cargo
+      - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
+      # Cache the compiled libewf static library between runs.
+      # Keyed on the vendor submodule commit so it rebuilds on upgrades.
+      - name: Cache libewf build
+        uses: actions/cache@v4
+        with:
+          path: target/
+          key: ${{ runner.os }}-libewf-${{ hashFiles('vendor/libewf/configure.ac') }}-check
+          restore-keys: ${{ runner.os }}-libewf-
 
       - name: Check formatting
         run: cargo fmt --check
@@ -53,18 +70,28 @@ jobs:
       - name: Install Rust (rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install libewf dev package
-        run: sudo apt-get update -q && sudo apt-get install -y libewf-dev
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y \
+            autoconf automake libtool gettext pkg-config \
+            zlib1g-dev
 
-      - name: Cache cargo
+      - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-test-
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
+      - name: Cache libewf build
+        uses: actions/cache@v4
+        with:
+          path: target/
+          key: ${{ runner.os }}-libewf-${{ hashFiles('vendor/libewf/configure.ac') }}-test
+          restore-keys: ${{ runner.os }}-libewf-
 
       - name: Build (workspace)
         run: cargo build
@@ -83,10 +110,8 @@ jobs:
 
   musl:
     # Builds only the iridium binary for x86_64-unknown-linux-musl.
-    # libewf (and its C deps) are not yet cross-compiled for musl; that is
-    # addressed in Phase 8 (Hardening).  The ewf-sys crate is not in the
-    # binary's dependency graph until Phase 4, so this remains a pure-Rust
-    # static binary for now.
+    # The ewf crates are not yet in the binary's dependency graph (Phase 4),
+    # so no cross-compiled libewf is needed here.
     name: Static musl build (binary only)
     runs-on: ubuntu-latest
     steps:
@@ -113,7 +138,6 @@ jobs:
           restore-keys: ${{ runner.os }}-musl-
 
       - name: Build iridium binary (musl)
-        # Build only the binary crate; ewf-sys is not in its dep graph yet.
         run: cargo build --bin iridium --target x86_64-unknown-linux-musl
 
       - name: Verify static binary

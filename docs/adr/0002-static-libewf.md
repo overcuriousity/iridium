@@ -1,4 +1,4 @@
-# ADR 0002 — libewf Integration: Static FFI Bindings
+# ADR 0002 — libewf Integration: Vendored Autotools Build
 
 **Status:** Accepted
 
@@ -6,18 +6,33 @@
 
 iridium must produce forensically correct EWF images. libewf is the authoritative
 implementation of the Expert Witness Format used by EnCase, X-Ways, and other tools.
-Options considered: subprocess (ewfacquire), dynamic linking, static linking.
+Options considered: subprocess (ewfacquire), dynamic linking, static linking (system
+package), static linking (vendored source).
 
 ## Decision
 
-Vendor libewf as a git submodule and compile it statically via `build.rs` in the
-`iridium-ewf-sys` crate using the `cc` crate. Bindgen generates bindings at build time
-with a committed fallback for offline builds.
+Vendor libewf as a git submodule (`vendor/libewf`, pinned to tag `20240506`) and
+compile it statically via `build.rs` using the autotools chain:
 
-A `system-libewf` feature flag allows developers to skip the vendored build.
+1. `synclibs.sh` — clones the required libyal sub-libraries (libcerror, libcdata, …)
+   from GitHub into the build source tree.
+2. `autogen.sh` — generates the `configure` script.
+3. `./configure --enable-static --disable-shared --without-openssl --with-zlib`
+   (out-of-tree, under `$OUT_DIR/libewf-build/`).
+4. `make && make install` into `$OUT_DIR/libewf-install/`.
+
+Autotools (`autoconf`, `automake`, `libtool`, `gettext`), `pkg-config`, `git`, and
+`zlib` development headers are **hard build-time system requirements**.
+
+A `system-libewf` Cargo feature allows developers to use a system-installed libewf
+via pkg-config instead of the vendored build (convenience only, not for releases).
 
 ## Consequences
 
 - Single binary guarantee is maintained.
-- Reproducible builds: the exact libewf revision is pinned in the submodule.
-- Phase 1 of the roadmap is dedicated to implementing `build.rs`.
+- Reproducible builds: exact libewf revision is pinned in `.gitmodules`.
+- Build hosts must have autotools installed (CI installs them explicitly).
+- The sub-libraries needed by libewf are fetched from GitHub at first build;
+  subsequent builds reuse the compiled `.a` cached in `$OUT_DIR`.
+- Cross-compilation for musl is satisfied via `LIBEWF_STATIC_DIR=<dir>` pointing
+  to a pre-compiled musl-linked `libewf.a` (wired up in Phase 8).

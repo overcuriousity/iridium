@@ -12,6 +12,6 @@ links       = "ewf"
 pkg-config = "0.3"
 
 [features]
-# Force dynamic linking via pkg-config instead of the vendored build.
-# Useful for development on systems where compiling libewf from source is impractical.
+# Use system pkg-config instead of compiling libewf from vendor/ source.
+# Requires libewf-dev (Debian/Ubuntu) or libewf-devel (Fedora/RHEL).
 system-libewf = []
