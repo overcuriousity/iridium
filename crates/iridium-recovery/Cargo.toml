@@ -1,0 +1,14 @@
+[package]
+name        = "iridium-recovery"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "iridium — dd_rescue-style recovery mode for damaged disks"
+
+[dependencies]
+iridium-core   = { path = "../iridium-core" }
+iridium-device = { path = "../iridium-device" }
+iridium-audit  = { path = "../iridium-audit" }
+thiserror.workspace = true

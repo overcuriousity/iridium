@@ -1,0 +1,15 @@
+[package]
+name        = "iridium-device"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "iridium — disk enumeration, HPA/DCO detection, read-only access"
+
+[dependencies]
+iridium-core = { path = "../iridium-core" }
+nix.workspace  = true
+libc.workspace = true
+thiserror.workspace = true
+serde.workspace = true

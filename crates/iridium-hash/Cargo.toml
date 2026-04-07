@@ -1,0 +1,15 @@
+[package]
+name        = "iridium-hash"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "iridium — streaming hash computation (MD5, SHA-1, SHA-256)"
+
+[dependencies]
+iridium-core = { path = "../iridium-core" }
+md-5.workspace  = true
+sha1.workspace  = true
+sha2.workspace  = true
+thiserror.workspace = true

@@ -10,13 +10,13 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: Build & Test
+  check:
+    name: Format & Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust stable
+      - name: Install Rust (rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -37,8 +37,67 @@ jobs:
       - name: Clippy
         run: cargo clippy -- -D warnings
 
+  test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-test-
+
       - name: Build
-        run: cargo build --release
+        run: cargo build
 
       - name: Test
         run: cargo test
+
+  deny:
+    name: License & Advisory Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  musl:
+    name: Static musl build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust + musl target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install musl toolchain
+        run: sudo apt-get install -y musl-tools
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-musl-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-musl-
+
+      - name: Build (musl)
+        run: cargo build --target x86_64-unknown-linux-musl
+
+      - name: Verify static binary
+        run: |
+          BIN=target/x86_64-unknown-linux-musl/debug/iridium
+          file "$BIN"
+          ldd "$BIN" 2>&1 | grep -q "not a dynamic executable" && echo "OK: static binary" || (ldd "$BIN"; exit 1)

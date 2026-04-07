@@ -1,0 +1,18 @@
+[package]
+name        = "iridium-ewf-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "iridium — raw FFI bindings for libewf (statically linked)"
+links       = "ewf"
+
+[build-dependencies]
+# cc and bindgen will be added when Phase 1 is implemented
+# cc      = "1"
+# bindgen = "0.70"
+
+[features]
+# Use system-installed libewf instead of vendored build (developer convenience)
+system-libewf = []

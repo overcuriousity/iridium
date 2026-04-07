@@ -1,0 +1,14 @@
+[package]
+name        = "iridium-ewf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "iridium — safe Rust wrapper around libewf"
+
+[dependencies]
+iridium-ewf-sys = { path = "../iridium-ewf-sys" }
+iridium-core    = { path = "../iridium-core" }
+thiserror.workspace = true
+libc.workspace = true

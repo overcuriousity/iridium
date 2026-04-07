@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-release:
+    name: Build static release binary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust + musl target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install musl toolchain
+        run: sudo apt-get install -y musl-tools
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-release-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release (musl)
+        run: cargo build --release --target x86_64-unknown-linux-musl
+
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          BINARY=target/x86_64-unknown-linux-musl/release/iridium
+          SHA256=$(sha256sum "$BINARY" | awk '{print $1}')
+          cp "$BINARY" "iridium-${VERSION}-x86_64-linux-musl"
+          echo "$SHA256  iridium-${VERSION}-x86_64-linux-musl" > "iridium-${VERSION}-x86_64-linux-musl.sha256"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            iridium-*-x86_64-linux-musl
+            iridium-*-x86_64-linux-musl.sha256
+          generate_release_notes: true

@@ -1,0 +1,22 @@
+[package]
+name        = "iridium-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "iridium — forensic disk imaging GUI"
+
+[[bin]]
+name = "iridium"
+path = "src/main.rs"
+
+[dependencies]
+# egui/eframe added in Phase 7 when the GUI shell is implemented
+iridium-core     = { path = "../iridium-core" }
+iridium-device   = { path = "../iridium-device" }
+iridium-acquire  = { path = "../iridium-acquire" }
+iridium-audit    = { path = "../iridium-audit" }
+clap.workspace   = true
+crossbeam-channel.workspace = true
+thiserror.workspace = true
