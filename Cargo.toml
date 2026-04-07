@@ -1,0 +1,9 @@
+[package]
+name = "iridium"
+version = "0.1.0"
+edition = "2024"
+description = "A forensic disk imaging GUI application — successor to Guymager"
+license = "GPL-3.0-or-later"
+authors = ["overcuriousity"]
+
+[dependencies]
