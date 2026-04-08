@@ -3,6 +3,7 @@
 // `EwfHandle` owns a `*mut libewf_handle_t` and exposes a typed, panic-free
 // API. All libewf errors are captured into `EwfError` and returned as `Result`.
 
+#[rustfmt::skip]
 use std::{
     ffi::{CString, c_char},
     marker::PhantomData,
@@ -344,6 +345,10 @@ impl EwfHandle {
     // ── Explicit close ────────────────────────────────────────────────────
 
     /// Closes the underlying file(s). Also called automatically on `Drop`.
+    ///
+    /// Sets `inner` to null after a successful close so that `Drop` does not
+    /// attempt a second `libewf_handle_close`. libewf has process-global state
+    /// and a double-close corrupts it, causing subsequent handles to fail.
     pub fn close(&mut self) -> Result<(), EwfError> {
         if self.inner.is_null() {
             return Ok(());
@@ -353,6 +358,8 @@ impl EwfHandle {
         if rc != 0 {
             return Err(unsafe { harvest_error(error) });
         }
+        // Null out so Drop skips the close and only frees the handle.
+        self.inner = std::ptr::null_mut();
         Ok(())
     }
 }

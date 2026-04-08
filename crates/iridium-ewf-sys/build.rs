@@ -10,7 +10,7 @@
 // The full vendored autotools build (synclibs.sh + autoconf chain) is
 // deferred to Phase 8 (Hardening) per docs/adr/0002-static-libewf.md.
 
-use std::{env, path::PathBuf, process::Command};
+use std::{env, path::Path, process::Command};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
