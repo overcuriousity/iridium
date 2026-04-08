@@ -19,8 +19,7 @@
 //   - feature "system-libewf"   use pkg-config instead (developer convenience)
 
 use std::{
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -30,18 +29,14 @@ fn main() {
     let vendor_src = manifest_dir
         .join("../../vendor/libewf")
         .canonicalize()
-        .unwrap_or_else(|_| panic!(
-            "vendor/libewf not found — run: git submodule update --init vendor/libewf"
-        ));
+        .unwrap_or_else(|_| {
+            panic!("vendor/libewf not found — run: git submodule update --init vendor/libewf")
+        });
 
-    println!(
-        "cargo:rerun-if-changed={}",
-        vendor_src.join("configure.ac").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        vendor_src.join("synclibs.sh").display()
-    );
+    // Re-run when any file in the vendored source tree changes (not just
+    // configure.ac) so that source edits or submodule upgrades always
+    // trigger a rebuild.
+    println!("cargo:rerun-if-changed={}", vendor_src.display());
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=LIBEWF_STATIC_DIR");
 
@@ -55,7 +50,11 @@ fn main() {
 
     // ── Escape hatch 2: system-libewf feature → pkg-config ──────────────────
     if env::var("CARGO_FEATURE_SYSTEM_LIBEWF").is_ok() {
-        if pkg_config::Config::new().statik(true).probe("libewf").is_ok() {
+        if pkg_config::Config::new()
+            .statik(true)
+            .probe("libewf")
+            .is_ok()
+        {
             return;
         }
         if pkg_config::Config::new().probe("libewf").is_ok() {
@@ -89,10 +88,17 @@ fn main() {
         return;
     }
 
-    // 1. Sync libyal sub-libraries into the stable deps dir (once per OUT_DIR).
-    //    synclibs.sh clones from GitHub; guard with a sentinel file.
+    // 1. Sync libyal sub-libraries into the stable deps dir (once per OUT_DIR
+    //    *and* per submodule revision).  The sentinel stores the HEAD commit of
+    //    vendor/libewf so that upgrading the submodule invalidates the cached
+    //    deps and re-runs synclibs.sh with the new dependency versions.
+    let submodule_rev = git_head_rev(&vendor_src);
     let synced_sentinel = deps_dir.join(".synced");
-    if !synced_sentinel.exists() {
+    let sentinel_stale = fs::read_to_string(&synced_sentinel)
+        .map(|s| s.trim().to_owned() != submodule_rev)
+        .unwrap_or(true);
+
+    if sentinel_stale {
         // Copy synclibs.sh into a scratch dir so we can run it without touching
         // the read-only vendor submodule.
         fs::create_dir_all(&deps_dir).expect("create deps dir");
@@ -107,7 +113,8 @@ fn main() {
             .arg(scratch.join("synclibs.sh").canonicalize().unwrap())
             .current_dir(&deps_dir));
 
-        fs::write(&synced_sentinel, "").expect("write sentinel");
+        // Store the current revision so we can detect submodule upgrades.
+        fs::write(&synced_sentinel, &submodule_rev).expect("write sentinel");
     }
 
     // 2. Assemble src_dir: vendor source + synced sub-libraries.
@@ -121,9 +128,8 @@ fn main() {
             let name = path.file_name().unwrap().to_str().unwrap();
             let dest = src_dir.join(name);
             if !dest.exists() {
-                copy_dir_all(&path, &dest).unwrap_or_else(|e| {
-                    panic!("Failed to copy sub-lib {name}: {e}")
-                });
+                copy_dir_all(&path, &dest)
+                    .unwrap_or_else(|e| panic!("Failed to copy sub-lib {name}: {e}"));
             }
         }
     }
@@ -180,6 +186,20 @@ fn available_parallelism() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(2)
+}
+
+/// Returns the HEAD commit hash of a git repository at `repo_path`, or a
+/// fallback string when git is unavailable or the path isn't a repo.
+fn git_head_rev(repo_path: &Path) -> String {
+    Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo_path)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_owned())
+        .unwrap_or_else(|| "unknown".to_owned())
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {

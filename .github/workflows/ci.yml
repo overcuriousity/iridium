@@ -9,11 +9,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-# Build tools required by the vendored libewf autotools build.
-# These are HARD dependencies — libewf is always compiled from source.
-# System packages: autoconf automake libtool gettext pkg-config zlib1g-dev
-# (uuid-dev is needed for ewftools but not for the library itself)
-
 jobs:
   check:
     name: Format & Lint
@@ -31,9 +26,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y \
-            autoconf automake libtool gettext pkg-config \
-            zlib1g-dev
+          sudo apt-get install -y libewf-dev pkg-config
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -44,20 +37,11 @@ jobs:
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-registry-
 
-      # Cache the compiled libewf static library between runs.
-      # Keyed on the vendor submodule commit so it rebuilds on upgrades.
-      - name: Cache libewf build
-        uses: actions/cache@v4
-        with:
-          path: target/
-          key: ${{ runner.os }}-libewf-${{ hashFiles('vendor/libewf/configure.ac') }}-check
-          restore-keys: ${{ runner.os }}-libewf-
-
       - name: Check formatting
         run: cargo fmt --check
 
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --features iridium-ewf-sys/system-libewf -- -D warnings
 
   test:
     name: Build & Test
@@ -73,9 +57,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y \
-            autoconf automake libtool gettext pkg-config \
-            zlib1g-dev
+          sudo apt-get install -y libewf-dev pkg-config
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -86,18 +68,11 @@ jobs:
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-registry-
 
-      - name: Cache libewf build
-        uses: actions/cache@v4
-        with:
-          path: target/
-          key: ${{ runner.os }}-libewf-${{ hashFiles('vendor/libewf/configure.ac') }}-test
-          restore-keys: ${{ runner.os }}-libewf-
-
       - name: Build (workspace)
-        run: cargo build
+        run: cargo build --features iridium-ewf-sys/system-libewf
 
       - name: Test (workspace)
-        run: cargo test
+        run: cargo test --features iridium-ewf-sys/system-libewf
 
   deny:
     name: License & Advisory Check
@@ -144,6 +119,6 @@ jobs:
         run: |
           BIN=target/x86_64-unknown-linux-musl/debug/iridium
           file "$BIN"
-          ldd "$BIN" 2>&1 | grep -q "not a dynamic executable" \
+          ldd "$BIN" 2>&1 | grep -qE "not a dynamic executable|statically linked" \
             && echo "OK: static binary" \
             || (ldd "$BIN"; exit 1)

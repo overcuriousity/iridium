@@ -4,7 +4,7 @@
 // API. All libewf errors are captured into `EwfError` and returned as `Result`.
 
 use std::{
-    ffi::{CString, c_char},
+    ffi::{c_char, CString},
     path::Path,
 };
 
@@ -32,11 +32,11 @@ unsafe fn harvest_error(mut raw: *mut sys::libewf_error_t) -> EwfError {
         return EwfError::Library("(no error detail)".into());
     }
     let mut buf = vec![0u8; 512];
-    let n = unsafe {
-        sys::libewf_error_sprint(raw, buf.as_mut_ptr() as *mut c_char, buf.len())
-    };
+    let n = unsafe { sys::libewf_error_sprint(raw, buf.as_mut_ptr() as *mut c_char, buf.len()) };
     let msg = if n > 0 {
-        String::from_utf8_lossy(&buf[..n as usize]).trim_end_matches('\0').to_owned()
+        String::from_utf8_lossy(&buf[..n as usize])
+            .trim_end_matches('\0')
+            .to_owned()
     } else {
         "(libewf_error_sprint failed)".into()
     };
@@ -66,6 +66,9 @@ impl EwfHandle {
         let rc = unsafe { sys::libewf_handle_initialize(&mut handle, &mut error) };
         if rc != 1 {
             return Err(unsafe { harvest_error(error) });
+        }
+        if handle.is_null() {
+            return Err(EwfError::NullPointer);
         }
         Ok(Self { inner: handle })
     }
@@ -117,8 +120,7 @@ impl EwfHandle {
     /// Sets the bytes-per-sector value (default 512).
     pub fn set_bytes_per_sector(&mut self, bps: u32) -> Result<(), EwfError> {
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
-        let rc =
-            unsafe { sys::libewf_handle_set_bytes_per_sector(self.inner, bps, &mut error) };
+        let rc = unsafe { sys::libewf_handle_set_bytes_per_sector(self.inner, bps, &mut error) };
         if rc != 1 {
             return Err(unsafe { harvest_error(error) });
         }
@@ -172,9 +174,8 @@ impl EwfHandle {
     /// Embeds the raw 16-byte MD5 digest into the image.
     pub fn set_md5_hash(&mut self, digest: &[u8; 16]) -> Result<(), EwfError> {
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
-        let rc = unsafe {
-            sys::libewf_handle_set_md5_hash(self.inner, digest.as_ptr(), 16, &mut error)
-        };
+        let rc =
+            unsafe { sys::libewf_handle_set_md5_hash(self.inner, digest.as_ptr(), 16, &mut error) };
         if rc != 1 {
             return Err(unsafe { harvest_error(error) });
         }
@@ -203,8 +204,7 @@ impl EwfHandle {
         let s = base_path
             .to_str()
             .ok_or_else(|| EwfError::InvalidPath(base_path.display().to_string()))?;
-        let c = CString::new(s)
-            .map_err(|_| EwfError::InvalidPath(s.to_owned()))?;
+        let c = CString::new(s).map_err(|_| EwfError::InvalidPath(s.to_owned()))?;
         // SAFETY: `c` remains alive for the duration of the FFI call.
         // The C signature takes `*mut *mut c_char` but libewf only reads the
         // filename string — it does not modify the pointer value or the string
@@ -213,13 +213,7 @@ impl EwfHandle {
 
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe {
-            sys::libewf_handle_open(
-                self.inner,
-                &mut ptr,
-                1,
-                sys::LIBEWF_OPEN_WRITE,
-                &mut error,
-            )
+            sys::libewf_handle_open(self.inner, &mut ptr, 1, sys::LIBEWF_OPEN_WRITE, &mut error)
         };
         // `c` is dropped here after the call.
 
@@ -234,7 +228,9 @@ impl EwfHandle {
         let cstrings: Vec<CString> = paths
             .iter()
             .map(|p| {
-                let s = p.to_str().ok_or_else(|| EwfError::InvalidPath(p.display().to_string()))?;
+                let s = p
+                    .to_str()
+                    .ok_or_else(|| EwfError::InvalidPath(p.display().to_string()))?;
                 CString::new(s).map_err(|_| EwfError::InvalidPath(s.to_owned()))
             })
             .collect::<Result<_, _>>()?;
@@ -243,7 +239,8 @@ impl EwfHandle {
         // keeping each pointer valid. The C API signature uses `*mut *mut c_char`
         // but libewf only reads the filenames — it does not write through the
         // pointers. The `*mut` cast is required to match the C signature.
-        let mut ptrs: Vec<*mut c_char> = cstrings.iter().map(|c| c.as_ptr() as *mut c_char).collect();
+        let mut ptrs: Vec<*mut c_char> =
+            cstrings.iter().map(|c| c.as_ptr() as *mut c_char).collect();
 
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe {

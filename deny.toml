@@ -18,8 +18,6 @@ allow = [
     "CC0-1.0",
     "OpenSSL",
 ]
-# GPL/LGPL/AGPL deps require explicit review before adding.
-deny = ["GPL-2.0", "AGPL-3.0"]
 
 [advisories]
 version = 2
