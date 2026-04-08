@@ -42,9 +42,8 @@ pub(crate) fn enumerate() -> Result<Vec<Disk>, DeviceError> {
 
         // Partitions live as subdirs of the device dir named {dev}[0-9]* or {dev}p[0-9]*.
         for part in partitions_of(&sysfs_dev, &dev_name)? {
-            let raw_name = part.file_name();
-            let part_name = raw_name
-                .as_deref()
+            let part_name = part
+                .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let part_dev = PathBuf::from(format!("/dev/{part_name}"));
