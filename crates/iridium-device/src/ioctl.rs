@@ -133,8 +133,9 @@ fn parse_hpa_dco(words: &[u16; 256], logical_sector_size: u32) -> (Option<u64>, 
     // Some(visible_bytes) when HPA is active — note: this is the restricted visible
     // size, not the native capacity. The native max requires Phase 8 implementation.
     // Multiply by logical sector size: IDENTIFY sector counts are in logical sectors.
+    // Use checked_mul: malformed IDENTIFY data could otherwise overflow u64.
     let hpa_size_bytes = if hpa_active && visible_sectors > 0 {
-        Some(visible_sectors * logical_sector_size as u64)
+        visible_sectors.checked_mul(logical_sector_size as u64)
     } else {
         None
     };

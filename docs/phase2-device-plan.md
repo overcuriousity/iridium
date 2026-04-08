@@ -47,11 +47,11 @@ impl Disk {
     pub fn open_read_only(&self) -> Result<DeviceReader, DeviceError>;
 }
 
-pub struct DeviceReader { /* fd, size_bytes, sector_size, aligned_buf */ }
+pub struct DeviceReader { /* fd, size_bytes, logical_sector_size, aligned_buf */ }
 impl DeviceReader {
     pub fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, DeviceError>;
     pub fn size_bytes(&self) -> u64;
-    pub fn sector_size(&self) -> u32;
+    pub fn logical_sector_size(&self) -> u32;
 }
 ```
 

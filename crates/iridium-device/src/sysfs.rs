@@ -33,8 +33,7 @@ pub(crate) fn enumerate() -> Result<Vec<Disk>, DeviceError> {
         let parent_path = disk.path.clone();
         disks.push(disk);
 
-        // Partitions live as subdirs of the device dir named {dev}[0-9]* or {dev}p[0-9]*.
-        for part in partitions_of(&sysfs_dev, &dev_name)? {
+        for part in partitions_of(&sysfs_dev)? {
             let part_name = part
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -58,13 +57,23 @@ fn read_disk(
     let serial = read_attr_optional(sysfs, "device/serial");
     let size_sectors = read_attr_u64(sysfs, "size")?;
     // logical_block_size drives LBA counts and O_DIRECT alignment requirements.
-    let logical_sector_size = read_attr_u32(sysfs, "queue/logical_block_size").unwrap_or(512);
-    let sector_size = read_attr_u32(sysfs, "queue/hw_sector_size").unwrap_or(512);
+    // A value of 0 is invalid; clamp to the universal minimum of 512.
+    let logical_sector_size = read_attr_u32(sysfs, "queue/logical_block_size")
+        .unwrap_or(0)
+        .max(512);
+    let sector_size = read_attr_u32(sysfs, "queue/hw_sector_size")
+        .unwrap_or(0)
+        .max(512);
     let removable = read_attr_bool(sysfs, "removable");
     let rotational = read_attr_bool(sysfs, "queue/rotational");
     let read_only = read_attr_bool(sysfs, "ro");
 
-    let size_bytes = size_sectors * 512; // sysfs size is always in 512-byte units
+    let size_bytes = size_sectors
+        .checked_mul(512)
+        .ok_or_else(|| DeviceError::Sysfs {
+            path: sysfs.join("size"),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidData, "size overflow"),
+        })?;
 
     let (hpa_size_bytes, dco_restricted) = ioctl::hpa_dco(dev_path, logical_sector_size);
 
@@ -96,18 +105,28 @@ fn read_partition(
     let model = read_attr_optional(sysfs_parent, "device/model");
     let serial = read_attr_optional(sysfs_parent, "device/serial");
     let size_sectors = read_attr_u64(sysfs_part, "size")?;
-    let logical_sector_size =
-        read_attr_u32(sysfs_parent, "queue/logical_block_size").unwrap_or(512);
-    let sector_size = read_attr_u32(sysfs_parent, "queue/hw_sector_size").unwrap_or(512);
+    let logical_sector_size = read_attr_u32(sysfs_parent, "queue/logical_block_size")
+        .unwrap_or(0)
+        .max(512);
+    let sector_size = read_attr_u32(sysfs_parent, "queue/hw_sector_size")
+        .unwrap_or(0)
+        .max(512);
     let rotational = read_attr_bool(sysfs_parent, "queue/rotational");
     let removable = read_attr_bool(sysfs_parent, "removable");
     let read_only = read_attr_bool(sysfs_part, "ro");
+
+    let size_bytes = size_sectors
+        .checked_mul(512)
+        .ok_or_else(|| DeviceError::Sysfs {
+            path: sysfs_part.join("size"),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidData, "size overflow"),
+        })?;
 
     Ok(Disk {
         path: dev_path.to_path_buf(),
         model,
         serial,
-        size_bytes: size_sectors * 512,
+        size_bytes,
         logical_sector_size,
         sector_size,
         hpa_size_bytes: None, // HPA is a whole-disk concept
@@ -122,40 +141,26 @@ fn read_partition(
 // ── Partition discovery ───────────────────────────────────────────────────────
 
 /// Return sysfs paths for all partition subdirs of a device directory.
-/// Partition dirs are named `{dev_name}[0-9]+` (SCSI/loop) or `{dev_name}p[0-9]+` (NVMe).
-fn partitions_of(sysfs_dev: &Path, dev_name: &str) -> Result<Vec<PathBuf>, DeviceError> {
+///
+/// Detection uses the `partition` sysfs attribute: the kernel exports
+/// `{sysfs_dev}/{name}/partition` for every partition, regardless of device
+/// naming convention. This is more reliable than name-based heuristics.
+fn partitions_of(sysfs_dev: &Path) -> Result<Vec<PathBuf>, DeviceError> {
     let mut parts = Vec::new();
 
-    let rd = match fs::read_dir(sysfs_dev) {
-        Ok(r) => r,
-        Err(e) => {
-            return Err(DeviceError::Sysfs {
-                path: sysfs_dev.to_path_buf(),
-                source: e,
-            });
-        }
-    };
+    let rd = fs::read_dir(sysfs_dev).map_err(|e| DeviceError::Sysfs {
+        path: sysfs_dev.to_path_buf(),
+        source: e,
+    })?;
 
     for entry in rd {
         let entry = entry.map_err(|e| DeviceError::Sysfs {
             path: sysfs_dev.to_path_buf(),
             source: e,
         })?;
-
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-
-        if !name.starts_with(dev_name) {
-            continue;
-        }
-
-        // The suffix after dev_name must be purely digits, or 'p' followed by digits.
-        let suffix = &name[dev_name.len()..];
-        let is_partition = suffix.chars().all(|c| c.is_ascii_digit())
-            || (suffix.starts_with('p') && suffix[1..].chars().all(|c| c.is_ascii_digit()));
-
-        if is_partition && !suffix.is_empty() && entry.path().is_dir() {
-            parts.push(entry.path());
+        let path = entry.path();
+        if path.is_dir() && path.join("partition").exists() {
+            parts.push(path);
         }
     }
 
@@ -209,27 +214,6 @@ fn read_attr_bool(sysfs: &Path, attr: &str) -> bool {
 mod tests {
     use super::*;
     use std::path::Path;
-
-    #[test]
-    fn partition_suffix_detection() {
-        // SCSI style: sda1, sda12
-        let check = |dev: &str, name: &str| -> bool {
-            if !name.starts_with(dev) {
-                return false;
-            }
-            let suffix = &name[dev.len()..];
-            !suffix.is_empty()
-                && (suffix.chars().all(|c| c.is_ascii_digit())
-                    || (suffix.starts_with('p') && suffix[1..].chars().all(|c| c.is_ascii_digit())))
-        };
-        assert!(check("sda", "sda1"));
-        assert!(check("sda", "sda12"));
-        assert!(!check("sda", "sda")); // whole disk
-        assert!(check("nvme0n1", "nvme0n1p1"));
-        assert!(check("nvme0n1", "nvme0n1p12"));
-        assert!(!check("nvme0n1", "nvme0n1")); // whole disk
-        assert!(!check("sda", "sdb1")); // different device
-    }
 
     #[test]
     fn read_attr_optional_missing_returns_empty() {

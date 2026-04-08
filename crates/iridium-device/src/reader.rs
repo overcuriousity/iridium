@@ -109,9 +109,10 @@ impl DeviceReader {
                 let aligned_len = round_up(prefix + max_len, sector);
 
                 // Grow the scratch buffer if needed.
-                // next_power_of_two ensures Layout alignment is always valid.
+                // `sector` is a power of two here (invariant from open_inner),
+                // so it is a valid Layout alignment.
                 if ab.len() < aligned_len {
-                    *ab = AlignedBuf::new(aligned_len, sector.next_power_of_two());
+                    *ab = AlignedBuf::new(aligned_len, sector);
                 }
 
                 let n = self
@@ -155,34 +156,45 @@ fn open_inner(
     size_bytes: u64,
     logical_sector_size: u32,
 ) -> Result<DeviceReader, DeviceError> {
-    // Try O_RDONLY | O_DIRECT | O_NOATIME first.
-    match try_open(path, true) {
-        Ok(file) => {
-            // Layout::from_size_align requires a power-of-two alignment. Use
-            // next_power_of_two so non-standard sector sizes (520, 528 bytes) work.
-            let alloc_align = (logical_sector_size as usize).next_power_of_two();
-            let aligned_buf = Some(AlignedBuf::new(logical_sector_size as usize, alloc_align));
-            return Ok(DeviceReader {
-                file,
-                size_bytes,
-                logical_sector_size,
-                aligned_buf,
-            });
+    // O_DIRECT requires the buffer address to be aligned to the logical sector
+    // size. Layout::from_size_align demands a power-of-two alignment, so O_DIRECT
+    // is only safe when the sector size itself is a power of two. All mainstream
+    // devices (512-byte, 4096-byte) satisfy this; exotic sizes (520, 528) fall
+    // through to buffered reads.
+    if logical_sector_size.is_power_of_two() {
+        match try_open(path, true) {
+            Ok(file) => {
+                // logical_sector_size is a power of two here — valid as Layout alignment.
+                let sz = logical_sector_size as usize;
+                let aligned_buf = Some(AlignedBuf::new(sz, sz));
+                return Ok(DeviceReader {
+                    file,
+                    size_bytes,
+                    logical_sector_size,
+                    aligned_buf,
+                });
+            }
+            Err(nix::Error::EINVAL) => {
+                // Device or filesystem does not support O_DIRECT — fall through.
+                eprintln!(
+                    "iridium-device: O_DIRECT not supported for {:?}, \
+                     falling back to buffered reads (forensic integrity may be reduced)",
+                    path
+                );
+            }
+            Err(e) => {
+                return Err(DeviceError::Open {
+                    path: path.to_path_buf(),
+                    source: e,
+                });
+            }
         }
-        Err(nix::Error::EINVAL) => {
-            // Device or filesystem does not support O_DIRECT — fall through.
-            eprintln!(
-                "iridium-device: O_DIRECT not supported for {:?}, \
-                 falling back to buffered reads (forensic integrity may be reduced)",
-                path
-            );
-        }
-        Err(e) => {
-            return Err(DeviceError::Open {
-                path: path.to_path_buf(),
-                source: e,
-            });
-        }
+    } else {
+        eprintln!(
+            "iridium-device: non-power-of-two sector size {} for {:?}, \
+             O_DIRECT not safe — using buffered reads",
+            logical_sector_size, path
+        );
     }
 
     // Fallback: open without O_DIRECT.
@@ -263,5 +275,74 @@ mod tests {
     fn aligned_buf_ptr_is_aligned() {
         let buf = AlignedBuf::new(4096, 512);
         assert_eq!(buf.ptr.as_ptr() as usize % 512, 0);
+    }
+
+    // ── O_DIRECT alignment math ───────────────────────────────────────────────
+
+    /// Compute (aligned_offset, prefix, aligned_len) for a given read request,
+    /// matching the logic in DeviceReader::read_at.
+    fn odirect_params(offset: u64, max_len: usize, sector: usize) -> (u64, usize, usize) {
+        let sector_u64 = sector as u64;
+        let aligned_offset = (offset / sector_u64) * sector_u64;
+        let prefix = (offset - aligned_offset) as usize;
+        let aligned_len = round_up(prefix + max_len, sector);
+        (aligned_offset, prefix, aligned_len)
+    }
+
+    #[test]
+    fn odirect_aligned_offset_already_aligned() {
+        // offset already on a sector boundary → no prefix, no extra span
+        let (ao, prefix, len) = odirect_params(512, 512, 512);
+        assert_eq!(ao, 512);
+        assert_eq!(prefix, 0);
+        assert_eq!(len, 512);
+    }
+
+    #[test]
+    fn odirect_unaligned_offset_mid_sector() {
+        // offset = 768 (512 + 256), sector = 512
+        // aligned_offset = 512, prefix = 256, span = 256 + 512 = 768 → rounds to 1024
+        let (ao, prefix, len) = odirect_params(768, 512, 512);
+        assert_eq!(ao, 512);
+        assert_eq!(prefix, 256);
+        assert_eq!(len, 1024);
+    }
+
+    #[test]
+    fn odirect_read_crosses_two_sectors() {
+        // offset = 256, reading 512 bytes → spans byte 256..768 → needs sectors 0 and 1
+        let (ao, prefix, len) = odirect_params(256, 512, 512);
+        assert_eq!(ao, 0);
+        assert_eq!(prefix, 256);
+        assert_eq!(len, 1024); // must cover both sectors
+    }
+
+    #[test]
+    fn odirect_small_read_within_one_sector() {
+        // offset = 100, read 10 bytes → all within first sector
+        let (ao, prefix, len) = odirect_params(100, 10, 512);
+        assert_eq!(ao, 0);
+        assert_eq!(prefix, 100);
+        assert_eq!(len, 512);
+    }
+
+    #[test]
+    fn odirect_4k_sector() {
+        // 4096-byte sectors, unaligned offset = 5000
+        // aligned_offset = 4096, prefix = 904, span = 904+1000 = 1904 → one sector
+        let (ao, prefix, len) = odirect_params(5000, 1000, 4096);
+        assert_eq!(ao, 4096);
+        assert_eq!(prefix, 5000 - 4096);
+        assert_eq!(len, 4096);
+    }
+
+    #[test]
+    fn odirect_4k_sector_crosses_boundary() {
+        // offset = 5000, reading 3500 bytes → 5000+3500 = 8500 → crosses into third sector
+        // prefix = 904, span = 904+3500 = 4404 → rounds up to 8192
+        let (ao, prefix, len) = odirect_params(5000, 3500, 4096);
+        assert_eq!(ao, 4096);
+        assert_eq!(prefix, 904);
+        assert_eq!(len, 4096 * 2);
     }
 }
