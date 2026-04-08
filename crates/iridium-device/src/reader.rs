@@ -97,8 +97,15 @@ impl DeviceReader {
             }
             Some(ab) => {
                 let sector = self.sector_size as usize;
-                // Round request up to next sector boundary (O_DIRECT requirement).
-                let aligned_len = round_up(max_len, sector);
+                let sector_u64 = self.sector_size as u64;
+
+                // O_DIRECT requires offset, length, and buffer all aligned to sector.
+                // Round offset down to the nearest sector boundary and read from there.
+                let aligned_offset = (offset / sector_u64) * sector_u64;
+                let prefix = (offset - aligned_offset) as usize;
+
+                // Total span to read (prefix bytes before requested data + the data).
+                let aligned_len = round_up(prefix + max_len, sector);
 
                 // Grow the scratch buffer if needed.
                 if ab.len() < aligned_len {
@@ -107,7 +114,7 @@ impl DeviceReader {
 
                 let n = self
                     .file
-                    .read_at(&mut ab.as_mut_slice()[..aligned_len], offset)
+                    .read_at(&mut ab.as_mut_slice()[..aligned_len], aligned_offset)
                     .map_err(|e| DeviceError::Read {
                         offset,
                         source: nix::Error::from(nix::errno::Errno::from_raw(
@@ -115,8 +122,10 @@ impl DeviceReader {
                         )),
                     })?;
 
-                let copy_len = n.min(max_len);
-                buf[..copy_len].copy_from_slice(&ab.as_mut_slice()[..copy_len]);
+                // n covers [aligned_offset, aligned_offset + n); useful data starts at prefix.
+                let available = n.saturating_sub(prefix);
+                let copy_len = available.min(max_len);
+                buf[..copy_len].copy_from_slice(&ab.as_mut_slice()[prefix..prefix + copy_len]);
                 Ok(copy_len)
             }
         }
@@ -136,7 +145,7 @@ impl DeviceReader {
 // ── open_read_only ────────────────────────────────────────────────────────────
 
 pub(crate) fn open_read_only(disk: &Disk) -> Result<DeviceReader, DeviceError> {
-    open_inner(&disk.path, disk.size_bytes, disk.sector_size)
+    open_inner(&disk.path, disk.size_bytes, disk.logical_sector_size)
 }
 
 fn open_inner(path: &Path, size_bytes: u64, sector_size: u32) -> Result<DeviceReader, DeviceError> {
@@ -182,11 +191,23 @@ fn open_inner(path: &Path, size_bytes: u64, sector_size: u32) -> Result<DeviceRe
 }
 
 fn try_open(path: &Path, direct: bool) -> Result<std::fs::File, nix::Error> {
-    use std::os::unix::fs::OpenOptionsExt;
     let mut flags = libc::O_RDONLY | libc::O_NOATIME;
     if direct {
         flags |= libc::O_DIRECT;
     }
+    match open_with_flags(path, flags) {
+        Ok(f) => Ok(f),
+        // O_NOATIME requires file ownership or CAP_FOWNER; retry without it so
+        // non-root callers can still open devices for which they have read access.
+        Err(nix::Error::EPERM) | Err(nix::Error::EACCES) => {
+            open_with_flags(path, flags & !libc::O_NOATIME)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn open_with_flags(path: &Path, flags: i32) -> Result<std::fs::File, nix::Error> {
+    use std::os::unix::fs::OpenOptionsExt;
     std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(flags)
@@ -202,7 +223,9 @@ fn try_open(path: &Path, direct: bool) -> Result<std::fs::File, nix::Error> {
 
 #[inline]
 fn round_up(n: usize, align: usize) -> usize {
-    (n + align - 1) & !(align - 1)
+    // Arithmetic form: works for any positive `align`, including non-power-of-two
+    // sector sizes (e.g. 520- or 528-byte sectors used by some SAS/FC drives).
+    ((n + align - 1) / align) * align
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

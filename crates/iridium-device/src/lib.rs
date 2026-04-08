@@ -40,12 +40,20 @@ pub struct Disk {
     pub model: String,
     /// Serial number string from the firmware, trimmed of whitespace.
     pub serial: String,
-    /// Total visible size in bytes (sectors × sector_size).
+    /// Total visible size in bytes; computed as `size_sectors × 512` because
+    /// `/sys/block/*/size` always reports 512-byte units regardless of physical sector size.
     pub size_bytes: u64,
-    /// Physical (hardware) sector size in bytes.
+    /// Logical (software-visible) sector size in bytes, from `queue/logical_block_size`.
+    /// Used for O_DIRECT alignment and LBA-count multiplications.
+    pub logical_sector_size: u32,
+    /// Physical (hardware) sector size in bytes, from `queue/hw_sector_size`.
     pub sector_size: u32,
-    /// Native capacity in bytes if an HPA is detected (`size_bytes` < native),
-    /// `None` for NVMe devices or when the ioctl is not available.
+    /// Visible (possibly HPA-restricted) size in bytes when the SET MAX feature set
+    /// is enabled, `None` for NVMe/loop devices or when the ioctl is unavailable.
+    ///
+    /// **Note:** this is the *current restricted* capacity reported by IDENTIFY, NOT
+    /// the native maximum. Retrieving the native max (via READ NATIVE MAX ADDRESS EXT)
+    /// is deferred to Phase 8.
     pub hpa_size_bytes: Option<u64>,
     /// `true` if the DCO (Device Configuration Overlay) feature set is active,
     /// meaning the firmware has restricted the reported capacity or features.
@@ -62,11 +70,12 @@ pub struct Disk {
 }
 
 impl Disk {
-    /// Enumerate all block devices visible to the kernel via `/sys/block/`.
+    /// Enumerate **all** block devices visible to the kernel via `/sys/block/`,
+    /// including physical disks, NVMe, optical drives, SD/eMMC, loop devices,
+    /// software RAID arrays, device-mapper volumes, and RAM-backed devices.
     ///
-    /// Returns whole disks and their partitions. Skips device-mapper (`dm-*`),
-    /// software RAID (`md*`), ramdisks (`ram*`), and compressed-RAM swap
-    /// (`zram*`). Loop devices and their partitions are included.
+    /// No device class is excluded at this layer — callers are responsible for
+    /// any display-time filtering.
     ///
     /// HPA and DCO detection require `CAP_SYS_RAWIO` (typically: root). If the
     /// process lacks the capability those fields are set to `None`/`false` so

@@ -89,7 +89,7 @@ fn ata_identify(dev_path: &Path) -> Result<Option<[u16; 256]>, nix::Error> {
 /// For NVMe / loop devices or on permission errors both values are
 /// `(None, false)` — the caller is not expected to surface this as an error
 /// during enumeration; it is logged implicitly by returning defaults.
-pub(crate) fn hpa_dco(dev_path: &Path, sector_size: u32) -> (Option<u64>, bool) {
+pub(crate) fn hpa_dco(dev_path: &Path, logical_sector_size: u32) -> (Option<u64>, bool) {
     match ata_identify(dev_path) {
         Ok(None) => (None, false), // NVMe / loop — not applicable
         Err(nix::Error::EPERM) | Err(nix::Error::EACCES) => {
@@ -101,11 +101,11 @@ pub(crate) fn hpa_dco(dev_path: &Path, sector_size: u32) -> (Option<u64>, bool) 
             (None, false)
         }
         Err(_) => (None, false), // ENOTTY, EINVAL, etc. — not an ATA device
-        Ok(Some(words)) => parse_hpa_dco(&words, sector_size),
+        Ok(Some(words)) => parse_hpa_dco(&words, logical_sector_size),
     }
 }
 
-fn parse_hpa_dco(words: &[u16; 256], sector_size: u32) -> (Option<u64>, bool) {
+fn parse_hpa_dco(words: &[u16; 256], logical_sector_size: u32) -> (Option<u64>, bool) {
     // HPA detection via SET MAX feature status bits.
     //
     // Both the LBA28 (words 60-61) and LBA48 (words 100-103) counts in IDENTIFY
@@ -132,8 +132,9 @@ fn parse_hpa_dco(words: &[u16; 256], sector_size: u32) -> (Option<u64>, bool) {
 
     // Some(visible_bytes) when HPA is active — note: this is the restricted visible
     // size, not the native capacity. The native max requires Phase 8 implementation.
+    // Multiply by logical sector size: IDENTIFY sector counts are in logical sectors.
     let hpa_size_bytes = if hpa_active && visible_sectors > 0 {
-        Some(visible_sectors * sector_size as u64)
+        Some(visible_sectors * logical_sector_size as u64)
     } else {
         None
     };

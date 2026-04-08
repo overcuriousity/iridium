@@ -10,8 +10,8 @@ read-only forensic access. Matches and extends Guymager's device layer.
 | Question | Decision |
 |----------|----------|
 | NVMe serial | sysfs-first; empty string if absent |
-| Privileges | Root required — EPERM → `DeviceError::PermissionDenied` with hint |
-| O_DIRECT alignment | Handled internally in `DeviceReader` (aligned buffer, copy out) |
+| Privileges | Root recommended; EPERM on HPA/DCO ioctl → log warning, return `(None, false)` (enumeration continues) |
+| O_DIRECT alignment | Handled internally in `DeviceReader` (offset rounded down + aligned buffer + copy out) |
 | Loop devices | Included (`loop*`) |
 | Partitions | Included (two-level sysfs walk) |
 
@@ -22,9 +22,10 @@ pub struct Disk {
     pub path: PathBuf,
     pub model: String,
     pub serial: String,
-    pub size_bytes: u64,
-    pub sector_size: u32,
-    pub hpa_size_bytes: Option<u64>,   // Some(native_bytes) if HPA present
+    pub size_bytes: u64,              // size_sectors × 512 (sysfs always 512-byte units)
+    pub logical_sector_size: u32,     // queue/logical_block_size — for LBA math & O_DIRECT
+    pub sector_size: u32,             // queue/hw_sector_size — physical sector size
+    pub hpa_size_bytes: Option<u64>,  // Some(visible_bytes) if SET MAX active (NOT native max)
     pub dco_restricted: bool,
     pub removable: bool,
     pub rotational: bool,              // false = SSD/NVMe
@@ -70,9 +71,8 @@ tests/
 
 ### 1 — sysfs enumeration (`sysfs.rs`)
 
-- Walk `/sys/block/`
-- **Skip**: `dm-*` `md*` `zram*` `ram*`
-- **Include**: `sd*` `nvme*` `hd*` `vd*` `loop*`
+- Walk `/sys/block/` and surface **every** entry — no device class is excluded
+  at the enumeration layer; callers filter for display purposes
 - Read per device: `device/model`, `device/serial`, `size` (×512), `queue/hw_sector_size`,
   `removable`, `queue/rotational`, `ro`
 - Partitions: scan device dir for entries matching `{dev}[0-9]*` or `{dev}p[0-9]*`;
@@ -82,10 +82,16 @@ tests/
 
 - Open `O_RDONLY | O_NONBLOCK`
 - `HDIO_DRIVE_CMD` ioctl → 512-byte ATA IDENTIFY data
-- Compare words 60-61 (LBA28 visible) vs 100-103 (LBA48 native max)
-- If native > visible → `hpa_size_bytes = Some(native * sector_size)`
-- EPERM → `DeviceError::PermissionDenied`
-- Any other failure (NVMe, not applicable) → `hpa_size_bytes = None`
+- HPA detection via SET MAX feature status bits (ACS-3 §7.12):
+  - word 82 bit 8 = SET MAX supported
+  - word 85 bit 8 = SET MAX enabled (HPA is restricting capacity)
+  - Both bits must be set to flag HPA active
+- When HPA is active: `hpa_size_bytes = Some(visible_sectors * logical_sector_size)`
+  - `visible_sectors` is taken from words 100-103 (LBA48) or 60-61 (LBA28 fallback)
+  - **Limitation**: this is the *restricted visible* size, not the native max.
+    Retrieving native capacity (READ NATIVE MAX ADDRESS EXT) is deferred to Phase 8.
+- EPERM/EACCES → log warning, return `(None, false)` (enumeration continues)
+- Any other failure (NVMe, ENOTTY, EINVAL, not applicable) → `hpa_size_bytes = None`
 
 ### 3 — DCO detection (`ioctl.rs`)
 

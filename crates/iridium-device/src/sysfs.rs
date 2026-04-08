@@ -9,8 +9,6 @@ use crate::{DeviceError, Disk, ioctl};
 
 const SYSFS_BLOCK: &str = "/sys/block";
 
-/// Prefixes that identify virtual / non-physical devices to skip.
-const SKIP_PREFIXES: &[&str] = &["dm-", "md", "zram", "ram"];
 
 pub(crate) fn enumerate() -> Result<Vec<Disk>, DeviceError> {
     let mut disks = Vec::new();
@@ -28,10 +26,6 @@ pub(crate) fn enumerate() -> Result<Vec<Disk>, DeviceError> {
 
         let dev_name = entry.file_name();
         let dev_name = dev_name.to_string_lossy();
-
-        if SKIP_PREFIXES.iter().any(|p| dev_name.starts_with(p)) {
-            continue;
-        }
 
         let sysfs_dev = entry.path(); // e.g. /sys/block/sda
         let dev_path = PathBuf::from(format!("/dev/{dev_name}")); // e.g. /dev/sda
@@ -64,6 +58,8 @@ fn read_disk(
     let model = read_attr_optional(sysfs, "device/model");
     let serial = read_attr_optional(sysfs, "device/serial");
     let size_sectors = read_attr_u64(sysfs, "size")?;
+    // logical_block_size drives LBA counts and O_DIRECT alignment requirements.
+    let logical_sector_size = read_attr_u32(sysfs, "queue/logical_block_size").unwrap_or(512);
     let sector_size = read_attr_u32(sysfs, "queue/hw_sector_size").unwrap_or(512);
     let removable = read_attr_bool(sysfs, "removable");
     let rotational = read_attr_bool(sysfs, "queue/rotational");
@@ -71,13 +67,14 @@ fn read_disk(
 
     let size_bytes = size_sectors * 512; // sysfs size is always in 512-byte units
 
-    let (hpa_size_bytes, dco_restricted) = ioctl::hpa_dco(dev_path, sector_size);
+    let (hpa_size_bytes, dco_restricted) = ioctl::hpa_dco(dev_path, logical_sector_size);
 
     Ok(Disk {
         path: dev_path.to_path_buf(),
         model,
         serial,
         size_bytes,
+        logical_sector_size,
         sector_size,
         hpa_size_bytes,
         dco_restricted,
@@ -100,6 +97,8 @@ fn read_partition(
     let model = read_attr_optional(sysfs_parent, "device/model");
     let serial = read_attr_optional(sysfs_parent, "device/serial");
     let size_sectors = read_attr_u64(sysfs_part, "size")?;
+    let logical_sector_size =
+        read_attr_u32(sysfs_parent, "queue/logical_block_size").unwrap_or(512);
     let sector_size = read_attr_u32(sysfs_parent, "queue/hw_sector_size").unwrap_or(512);
     let rotational = read_attr_bool(sysfs_parent, "queue/rotational");
     let removable = read_attr_bool(sysfs_parent, "removable");
@@ -110,6 +109,7 @@ fn read_partition(
         model,
         serial,
         size_bytes: size_sectors * 512,
+        logical_sector_size,
         sector_size,
         hpa_size_bytes: None, // HPA is a whole-disk concept
         dco_restricted: false,
@@ -211,15 +211,6 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    #[test]
-    fn skip_prefixes_filter_dm() {
-        assert!(SKIP_PREFIXES.iter().any(|p| "dm-0".starts_with(p)));
-        assert!(SKIP_PREFIXES.iter().any(|p| "md0".starts_with(p)));
-        assert!(SKIP_PREFIXES.iter().any(|p| "zram0".starts_with(p)));
-        assert!(!SKIP_PREFIXES.iter().any(|p| "sda".starts_with(p)));
-        assert!(!SKIP_PREFIXES.iter().any(|p| "nvme0n1".starts_with(p)));
-        assert!(!SKIP_PREFIXES.iter().any(|p| "loop0".starts_with(p)));
-    }
 
     #[test]
     fn partition_suffix_detection() {
