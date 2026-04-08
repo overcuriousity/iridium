@@ -17,11 +17,16 @@ pub(crate) fn enumerate() -> Result<Vec<Disk>, DeviceError> {
         source: e,
     })?;
 
+    // Enumeration is best-effort: a device that disappears during the walk
+    // (hot-unplug, transient ENOENT) is skipped rather than aborting the list.
     for entry in rd {
-        let entry = entry.map_err(|e| DeviceError::Sysfs {
-            path: PathBuf::from(SYSFS_BLOCK),
-            source: e,
-        })?;
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("iridium-device: skipping /sys/block entry: {e}");
+                continue;
+            }
+        };
 
         let dev_name = entry.file_name();
         let dev_name = dev_name.to_string_lossy();
@@ -29,17 +34,33 @@ pub(crate) fn enumerate() -> Result<Vec<Disk>, DeviceError> {
         let sysfs_dev = entry.path(); // e.g. /sys/block/sda
         let dev_path = PathBuf::from(format!("/dev/{dev_name}")); // e.g. /dev/sda
 
-        let disk = read_disk(&sysfs_dev, &dev_path, None)?;
+        let disk = match read_disk(&sysfs_dev, &dev_path, None) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("iridium-device: skipping {dev_path:?}: {e}");
+                continue;
+            }
+        };
         let parent_path = disk.path.clone();
         disks.push(disk);
 
-        for part in partitions_of(&sysfs_dev)? {
+        let parts = match partitions_of(&sysfs_dev) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("iridium-device: skipping partitions of {dev_path:?}: {e}");
+                vec![]
+            }
+        };
+        for part in parts {
             let part_name = part
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let part_dev = PathBuf::from(format!("/dev/{part_name}"));
-            disks.push(read_partition(&part, &part_dev, &sysfs_dev, &parent_path)?);
+            match read_partition(&part, &part_dev, &sysfs_dev, &parent_path) {
+                Ok(d) => disks.push(d),
+                Err(e) => eprintln!("iridium-device: skipping partition {part_dev:?}: {e}"),
+            }
         }
     }
 

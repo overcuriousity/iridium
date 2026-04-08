@@ -36,10 +36,8 @@ pub struct Disk {
 #[derive(Debug, Error)]
 pub enum DeviceError {
     Sysfs { path: PathBuf, source: io::Error },
-    Ioctl { path: PathBuf, source: nix::Error },
     Open { path: PathBuf, source: nix::Error },
     Read { offset: u64, source: nix::Error },
-    PermissionDenied,
 }
 
 impl Disk {
@@ -75,7 +73,8 @@ tests/
   at the enumeration layer; callers filter for display purposes
 - Read per device: `device/model`, `device/serial`, `size` (×512), `queue/hw_sector_size`,
   `removable`, `queue/rotational`, `ro`
-- Partitions: scan device dir for entries matching `{dev}[0-9]*` or `{dev}p[0-9]*`;
+- Partitions: a subdir of the device dir is a partition if it contains a `partition`
+  sysfs attribute (kernel exports this for every partition, unconditionally);
   inherit model/serial from parent, set `partition_of`
 
 ### 2 — HPA detection (`ioctl.rs`, SATA/SAS only)
@@ -108,8 +107,10 @@ tests/
 
 - Unit: sysfs parse helpers with fixture strings (no real device needed)
 - Unit: IDENTIFY byte-array parsing for HPA/DCO logic
-- Integration `tests/enumerate.rs`: smoke (non-empty result, paths exist in /dev);
-  loop device test (create via `losetup`, check presence, teardown)
+- Unit: `DeviceReader` O_DIRECT alignment math (offset/prefix/aligned_len)
+- `enumerate_does_not_panic` — smoke test, runs in CI (no /dev required)
+- `enumerate_paths_exist` — marked `#[ignore]`; requires /dev nodes in the
+  test environment; run explicitly with `cargo test -- --ignored`
 
 ### 6 — ADR
 

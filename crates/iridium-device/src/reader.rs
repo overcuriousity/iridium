@@ -10,10 +10,18 @@ use std::os::unix::fs::FileExt;
 
 use crate::{DeviceError, Disk};
 
-/// Minimum buffer alignment for O_DIRECT: one memory page.
-/// Stricter than the bare-minimum (logical sector size) but unambiguous,
-/// architecture-safe, and the standard choice in forensic tooling.
-const PAGE_SIZE: usize = 4096;
+/// Return the OS page size at runtime via `sysconf(_SC_PAGESIZE)`.
+///
+/// Used as the floor for O_DIRECT buffer alignment: aligning to
+/// `max(logical_sector_size, page_size())` is unambiguous in documentation,
+/// covers every Linux architecture (including 16 KiB–page ARM/RISC-V systems),
+/// and eliminates any risk of an EINVAL from under-alignment.
+fn page_size() -> usize {
+    // SAFETY: sysconf is always safe to call with _SC_PAGESIZE.
+    let sz = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    // Fallback to 4096 on error; over-aligning is always safe for O_DIRECT.
+    if sz > 0 { sz as usize } else { 4096 }
+}
 
 // ── Aligned buffer ────────────────────────────────────────────────────────────
 
@@ -31,7 +39,8 @@ struct AlignedBuf {
 }
 
 impl AlignedBuf {
-    /// Allocate `size` bytes aligned to `align`. Panics if size or align is 0.
+    /// Allocate `size` bytes aligned to `align`.
+    /// Panics if `align` is zero or not a power of two.
     fn new(size: usize, align: usize) -> Self {
         let layout = Layout::from_size_align(size, align).expect("invalid layout");
         // SAFETY: layout is non-zero and valid.
@@ -122,9 +131,14 @@ impl DeviceReader {
                 // Grow the scratch buffer if needed, keeping the same
                 // max(sector, PAGE_SIZE) alignment invariant from open_inner.
                 if ab.len() < aligned_len {
-                    *ab = AlignedBuf::new(aligned_len, sector.max(PAGE_SIZE));
+                    *ab = AlignedBuf::new(aligned_len, sector.max(page_size()));
                 }
 
+                // `aligned_offset + aligned_len` may extend past `size_bytes` when the
+                // final sector is partial (size_bytes % sector != 0). On Linux block
+                // devices, pread64 returns a short count at EOF rather than EINVAL —
+                // this is the documented kernel behaviour for O_DIRECT on block devices.
+                // The `n.saturating_sub(prefix)` below handles the short-count case.
                 let n = self
                     .file
                     .read_at(&mut ab.as_mut_slice()[..aligned_len], aligned_offset)
@@ -174,10 +188,10 @@ fn open_inner(
     if logical_sector_size.is_power_of_two() {
         match try_open(path, true) {
             Ok(file) => {
-                // Align to max(logical_sector_size, PAGE_SIZE) for forensic soundness.
+                // Align to max(logical_sector_size, page_size()) for forensic soundness.
                 // Both values are powers of two, so max is also a valid Layout alignment.
                 let sz = logical_sector_size as usize;
-                let align = sz.max(PAGE_SIZE);
+                let align = sz.max(page_size());
                 let aligned_buf = Some(AlignedBuf::new(sz, align));
                 return Ok(DeviceReader {
                     file,
