@@ -20,16 +20,11 @@ Enumerate devices via `/sys/block/` only. No udev, no libgudev.
 - Attributes (model, serial, size, sector size, rotational, removable, ro) are
   read from the sysfs attribute files exposed by the kernel.
 
-Devices are filtered by name prefix:
-
-| Prefix | Action | Reason |
-|--------|--------|--------|
-| `dm-*` | skip | device mapper (LVM, LUKS) — not a physical medium |
-| `md*` | skip | software RAID — image member disks individually |
-| `zram*` | skip | compressed RAM swap |
-| `ram*` | skip | RAM disk |
-| `sd*` `nvme*` `hd*` `vd*` | include | physical block devices |
-| `loop*` | include | loop-mounted images are valid imaging targets |
+All entries under `/sys/block/` are surfaced without filtering — physical disks,
+NVMe, optical drives, SD/eMMC, loop devices, software RAID arrays (`md*`),
+device-mapper volumes (`dm-*`), and RAM-backed devices (`ram*`, `zram*`) are all
+valid imaging targets depending on the investigation. Device-class filtering is
+a display/UI concern and must not be baked into the enumeration layer.
 
 ## Consequences
 

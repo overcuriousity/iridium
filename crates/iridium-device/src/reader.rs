@@ -59,7 +59,8 @@ unsafe impl Send for AlignedBuf {}
 pub struct DeviceReader {
     file: std::fs::File,
     size_bytes: u64,
-    sector_size: u32,
+    /// Logical sector size used for O_DIRECT alignment (from `queue/logical_block_size`).
+    logical_sector_size: u32,
     /// `Some` when opened with O_DIRECT; holds the aligned scratch buffer.
     aligned_buf: Option<AlignedBuf>,
 }
@@ -96,8 +97,8 @@ impl DeviceReader {
                 Ok(n)
             }
             Some(ab) => {
-                let sector = self.sector_size as usize;
-                let sector_u64 = self.sector_size as u64;
+                let sector = self.logical_sector_size as usize;
+                let sector_u64 = self.logical_sector_size as u64;
 
                 // O_DIRECT requires offset, length, and buffer all aligned to sector.
                 // Round offset down to the nearest sector boundary and read from there.
@@ -108,8 +109,9 @@ impl DeviceReader {
                 let aligned_len = round_up(prefix + max_len, sector);
 
                 // Grow the scratch buffer if needed.
+                // next_power_of_two ensures Layout alignment is always valid.
                 if ab.len() < aligned_len {
-                    *ab = AlignedBuf::new(aligned_len, sector);
+                    *ab = AlignedBuf::new(aligned_len, sector.next_power_of_two());
                 }
 
                 let n = self
@@ -136,9 +138,9 @@ impl DeviceReader {
         self.size_bytes
     }
 
-    /// Physical sector size in bytes.
-    pub fn sector_size(&self) -> u32 {
-        self.sector_size
+    /// Logical sector size in bytes (used for O_DIRECT alignment).
+    pub fn logical_sector_size(&self) -> u32 {
+        self.logical_sector_size
     }
 }
 
@@ -148,15 +150,22 @@ pub(crate) fn open_read_only(disk: &Disk) -> Result<DeviceReader, DeviceError> {
     open_inner(&disk.path, disk.size_bytes, disk.logical_sector_size)
 }
 
-fn open_inner(path: &Path, size_bytes: u64, sector_size: u32) -> Result<DeviceReader, DeviceError> {
+fn open_inner(
+    path: &Path,
+    size_bytes: u64,
+    logical_sector_size: u32,
+) -> Result<DeviceReader, DeviceError> {
     // Try O_RDONLY | O_DIRECT | O_NOATIME first.
     match try_open(path, true) {
         Ok(file) => {
-            let aligned_buf = Some(AlignedBuf::new(sector_size as usize, sector_size as usize));
+            // Layout::from_size_align requires a power-of-two alignment. Use
+            // next_power_of_two so non-standard sector sizes (520, 528 bytes) work.
+            let alloc_align = (logical_sector_size as usize).next_power_of_two();
+            let aligned_buf = Some(AlignedBuf::new(logical_sector_size as usize, alloc_align));
             return Ok(DeviceReader {
                 file,
                 size_bytes,
-                sector_size,
+                logical_sector_size,
                 aligned_buf,
             });
         }
@@ -185,7 +194,7 @@ fn open_inner(path: &Path, size_bytes: u64, sector_size: u32) -> Result<DeviceRe
     Ok(DeviceReader {
         file,
         size_bytes,
-        sector_size,
+        logical_sector_size,
         aligned_buf: None,
     })
 }
