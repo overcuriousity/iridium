@@ -26,9 +26,11 @@ fn ewf_write_read_roundtrip() {
     {
         let mut h = EwfHandle::new().expect("EwfHandle::new");
 
-        // Format/type/flags must be set before open_write so libewf can
-        // determine the segment filename extension.  media_size must come
-        // after open_write (libewf begins tracking writes at that point).
+        // open_write must come first; libewf rejects setter calls until the
+        // handle has been opened (access flags not yet set otherwise).
+        // media_size must follow open_write (libewf starts tracking writes then).
+        h.open_write(&base).expect("open_write");
+
         h.set_media_type(LIBEWF_MEDIA_TYPE_FIXED)
             .expect("set_media_type");
         h.set_media_flags(LIBEWF_MEDIA_FLAG_PHYSICAL)
@@ -44,7 +46,6 @@ fn ewf_write_read_roundtrip() {
         h.set_header_value(b"description", b"1 MiB round-trip test image")
             .expect("set description");
 
-        h.open_write(&base).expect("open_write");
         h.set_media_size(MIB as u64).expect("set_media_size");
 
         // Write in 64 KiB chunks
@@ -103,8 +104,8 @@ fn ewf_write_with_md5_hash() {
 
     {
         let mut h = EwfHandle::new().expect("EwfHandle::new");
-        h.set_format(LIBEWF_FORMAT_ENCASE6).expect("set_format");
         h.open_write(&base).expect("open_write");
+        h.set_format(LIBEWF_FORMAT_ENCASE6).expect("set_format");
         h.set_media_size(MIB as u64).expect("set_media_size");
 
         for chunk in data.chunks(64 * 1024) {
