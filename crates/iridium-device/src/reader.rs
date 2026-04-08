@@ -223,9 +223,9 @@ fn open_with_flags(path: &Path, flags: i32) -> Result<std::fs::File, nix::Error>
 
 #[inline]
 fn round_up(n: usize, align: usize) -> usize {
-    // Arithmetic form: works for any positive `align`, including non-power-of-two
-    // sector sizes (e.g. 520- or 528-byte sectors used by some SAS/FC drives).
-    ((n + align - 1) / align) * align
+    // Works for any positive `align`, including non-power-of-two sector sizes
+    // (e.g. 520- or 528-byte sectors used by some SAS/FC drives).
+    n.div_ceil(align) * align
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
