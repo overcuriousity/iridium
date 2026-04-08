@@ -51,9 +51,9 @@ pub struct EwfHandle {
     inner: *mut sys::libewf_handle_t,
 }
 
-// SAFETY: libewf handles are not thread-local; we never share the raw pointer
-// across threads without synchronization.
-unsafe impl Send for EwfHandle {}
+// `Send` is intentionally not implemented: libewf provides no documented
+// guarantee that handles can be moved across threads. Callers that need
+// cross-thread access should wrap `EwfHandle` in a `Mutex`.
 
 impl EwfHandle {
     // ── Constructor ──────────────────────────────────────────────────────
@@ -205,7 +205,11 @@ impl EwfHandle {
             .ok_or_else(|| EwfError::InvalidPath(base_path.display().to_string()))?;
         let c = CString::new(s)
             .map_err(|_| EwfError::InvalidPath(s.to_owned()))?;
-        let mut ptr = c.into_raw();
+        // SAFETY: `c` remains alive for the duration of the FFI call.
+        // The C signature takes `*mut *mut c_char` but libewf only reads the
+        // filename string — it does not modify the pointer value or the string
+        // contents. The `*mut` cast is required to match the C signature.
+        let mut ptr = c.as_ptr() as *mut c_char;
 
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe {
@@ -217,8 +221,7 @@ impl EwfHandle {
                 &mut error,
             )
         };
-        // Reclaim the pointer regardless of outcome to avoid leaking.
-        let _ = unsafe { CString::from_raw(ptr) };
+        // `c` is dropped here after the call.
 
         if rc != 1 {
             return Err(unsafe { harvest_error(error) });
@@ -236,6 +239,10 @@ impl EwfHandle {
             })
             .collect::<Result<_, _>>()?;
 
+        // SAFETY: `cstrings` remains alive for the duration of the FFI call,
+        // keeping each pointer valid. The C API signature uses `*mut *mut c_char`
+        // but libewf only reads the filenames — it does not write through the
+        // pointers. The `*mut` cast is required to match the C signature.
         let mut ptrs: Vec<*mut c_char> = cstrings.iter().map(|c| c.as_ptr() as *mut c_char).collect();
 
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();

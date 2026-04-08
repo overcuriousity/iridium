@@ -63,9 +63,7 @@ fn ewf_write_read_roundtrip() {
     // ── Read back ─────────────────────────────────────────────────────────
     {
         let mut h = EwfHandle::new().expect("EwfHandle::new (read)");
-        let segment_str = segment.to_str().expect("segment path not UTF-8");
-        h.open_read(&[&std::path::Path::new(segment_str)])
-            .expect("open_read");
+        h.open_read(&[segment.as_path()]).expect("open_read");
 
         let size = h.media_size().expect("media_size");
         assert_eq!(size, MIB as u64, "media_size mismatch");
