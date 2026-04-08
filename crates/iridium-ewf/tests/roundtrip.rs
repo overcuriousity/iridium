@@ -89,7 +89,7 @@ fn ewf_write_read_roundtrip() {
 
 #[test]
 fn ewf_write_with_md5_hash() {
-    use md_5::{Digest as _, Md5};
+    use md5::{Digest as _, Md5};
 
     let dir = TempDir::new().expect("tempdir");
     let base = dir.path().join("hashed_image");
