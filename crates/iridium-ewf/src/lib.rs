@@ -209,8 +209,9 @@ impl EwfHandle {
 
     /// Opens an EWF file for writing.
     ///
-    /// `base_path` is the output filename without extension.
-    /// libewf will add `.e01`, `.e02`, … automatically.
+    /// `path` is the full filename of the first segment, including extension
+    /// (e.g. `"image.e01"`). libewf uses the name verbatim and derives
+    /// subsequent segment names (`image.e02`, …) from it automatically.
     pub fn open_write(&mut self, base_path: &Path) -> Result<(), EwfError> {
         let s = base_path
             .to_str()

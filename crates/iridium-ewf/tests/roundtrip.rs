@@ -28,8 +28,10 @@ fn ewf_write_read_roundtrip() {
 
         // open_write must come first; libewf rejects setter calls until the
         // handle has been opened (access flags not yet set otherwise).
+        // Pass the full first-segment filename (with extension); libewf uses
+        // it verbatim and does not append an extension automatically.
         // media_size must follow open_write (libewf starts tracking writes then).
-        h.open_write(&base).expect("open_write");
+        h.open_write(&base.with_extension("e01")).expect("open_write");
 
         h.set_media_type(LIBEWF_MEDIA_TYPE_FIXED)
             .expect("set_media_type");
@@ -104,7 +106,7 @@ fn ewf_write_with_md5_hash() {
 
     {
         let mut h = EwfHandle::new().expect("EwfHandle::new");
-        h.open_write(&base).expect("open_write");
+        h.open_write(&base.with_extension("e01")).expect("open_write");
         h.set_format(LIBEWF_FORMAT_ENCASE6).expect("set_format");
         h.set_media_size(MIB as u64).expect("set_media_size");
 
