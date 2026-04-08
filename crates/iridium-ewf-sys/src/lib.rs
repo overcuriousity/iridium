@@ -285,7 +285,9 @@ mod tests {
         // libewf_get_version() must return a non-null, non-empty string.
         let ver = unsafe { libewf_get_version() };
         assert!(!ver.is_null(), "libewf_get_version returned NULL");
-        let s = unsafe { CStr::from_ptr(ver) }.to_str().expect("version not UTF-8");
+        let s = unsafe { CStr::from_ptr(ver) }
+            .to_str()
+            .expect("version not UTF-8");
         assert!(!s.is_empty(), "libewf_get_version returned empty string");
     }
 }

@@ -30,8 +30,12 @@ via pkg-config instead of the vendored build (convenience only, not for releases
 ## Consequences
 
 - Single binary guarantee is maintained.
-- Reproducible builds: exact libewf revision is pinned in `.gitmodules`.
-- Build hosts must have autotools installed (CI installs them explicitly).
+- Reproducible builds: the exact libewf revision is pinned by the submodule
+  commit recorded in the superproject (tag `20240506` documented above).
+  `.gitmodules` only records the URL and path, not the pinned commit.
+- Build hosts must have autotools installed for vendored builds; CI uses
+  `libewf-dev` + `--features system-libewf` for speed (vendored build is
+  wired up in Phase 8 for release artifacts).
 - The sub-libraries needed by libewf are fetched from GitHub at first build;
   subsequent builds reuse the compiled `.a` cached in `$OUT_DIR`.
 - Cross-compilation for musl is satisfied via `LIBEWF_STATIC_DIR=<dir>` pointing

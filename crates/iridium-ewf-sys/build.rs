@@ -48,7 +48,7 @@ fn main() {
         return;
     }
 
-    // ── Escape hatch 2: system-libewf feature → pkg-config ──────────────────
+    // ── Escape hatch 2: system-libewf feature → pkg-config (required) ──────
     if env::var("CARGO_FEATURE_SYSTEM_LIBEWF").is_ok() {
         if pkg_config::Config::new()
             .statik(true)
@@ -64,6 +64,20 @@ fn main() {
             "Feature `system-libewf` is set but libewf was not found via pkg-config.\n\
              Install libewf-dev (Debian/Ubuntu) or libewf-devel (Fedora/RHEL)."
         );
+    }
+
+    // ── Opportunistic pkg-config probe (no feature flag required) ────────────
+    // Allows `cargo check --workspace` to succeed on developer machines that
+    // have libewf installed without requiring the full autotools chain.
+    if pkg_config::Config::new()
+        .statik(true)
+        .probe("libewf")
+        .is_ok()
+    {
+        return;
+    }
+    if pkg_config::Config::new().probe("libewf").is_ok() {
+        return;
     }
 
     // ── Default: vendored autotools build ────────────────────────────────────

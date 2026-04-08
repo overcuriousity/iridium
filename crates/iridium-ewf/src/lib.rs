@@ -51,9 +51,10 @@ pub struct EwfHandle {
     inner: *mut sys::libewf_handle_t,
 }
 
-// `Send` is intentionally not implemented: libewf provides no documented
-// guarantee that handles can be moved across threads. Callers that need
-// cross-thread access should wrap `EwfHandle` in a `Mutex`.
+// `EwfHandle` is `!Send + !Sync` automatically: `*mut libewf_handle_t` is a
+// raw pointer, and raw pointers opt out of both auto-traits by default.
+// libewf provides no documented thread-safety guarantee, so this is correct.
+// Callers that need cross-thread access should wrap `EwfHandle` in a `Mutex`.
 
 impl EwfHandle {
     // ── Constructor ──────────────────────────────────────────────────────

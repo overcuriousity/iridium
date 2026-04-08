@@ -5,9 +5,7 @@
 // unavailable, which is the intended signal in CI.
 
 use iridium_ewf::EwfHandle;
-use iridium_ewf_sys::{
-    LIBEWF_FORMAT_ENCASE6, LIBEWF_MEDIA_FLAG_PHYSICAL, LIBEWF_MEDIA_TYPE_FIXED,
-};
+use iridium_ewf_sys::{LIBEWF_FORMAT_ENCASE6, LIBEWF_MEDIA_FLAG_PHYSICAL, LIBEWF_MEDIA_TYPE_FIXED};
 use tempfile::TempDir;
 
 const MIB: usize = 1024 * 1024;
@@ -28,9 +26,12 @@ fn ewf_write_read_roundtrip() {
     {
         let mut h = EwfHandle::new().expect("EwfHandle::new");
 
-        h.set_media_size(MIB as u64).expect("set_media_size");
-        h.set_media_type(LIBEWF_MEDIA_TYPE_FIXED).expect("set_media_type");
-        h.set_media_flags(LIBEWF_MEDIA_FLAG_PHYSICAL).expect("set_media_flags");
+        // Format/type/flags must be set before open_write; media_size must be
+        // set after open_write (required by the stable system libewf ABI).
+        h.set_media_type(LIBEWF_MEDIA_TYPE_FIXED)
+            .expect("set_media_type");
+        h.set_media_flags(LIBEWF_MEDIA_FLAG_PHYSICAL)
+            .expect("set_media_flags");
         h.set_format(LIBEWF_FORMAT_ENCASE6).expect("set_format");
         h.set_bytes_per_sector(512).expect("set_bytes_per_sector");
 
@@ -43,6 +44,7 @@ fn ewf_write_read_roundtrip() {
             .expect("set description");
 
         h.open_write(&base).expect("open_write");
+        h.set_media_size(MIB as u64).expect("set_media_size");
 
         // Write in 64 KiB chunks
         let chunk = 64 * 1024;
@@ -58,7 +60,10 @@ fn ewf_write_read_roundtrip() {
 
     // Verify the segment file was created.
     let segment = base.with_extension("e01");
-    assert!(segment.exists(), "segment file {segment:?} not found after write");
+    assert!(
+        segment.exists(),
+        "segment file {segment:?} not found after write"
+    );
 
     // ── Read back ─────────────────────────────────────────────────────────
     {
@@ -84,7 +89,7 @@ fn ewf_write_read_roundtrip() {
 
 #[test]
 fn ewf_write_with_md5_hash() {
-    use md5::{Digest as _, Md5};
+    use md_5::{Digest as _, Md5};
 
     let dir = TempDir::new().expect("tempdir");
     let base = dir.path().join("hashed_image");
@@ -97,9 +102,9 @@ fn ewf_write_with_md5_hash() {
 
     {
         let mut h = EwfHandle::new().expect("EwfHandle::new");
-        h.set_media_size(MIB as u64).expect("set_media_size");
         h.set_format(LIBEWF_FORMAT_ENCASE6).expect("set_format");
         h.open_write(&base).expect("open_write");
+        h.set_media_size(MIB as u64).expect("set_media_size");
 
         for chunk in data.chunks(64 * 1024) {
             h.write_buffer(chunk).expect("write_buffer");
@@ -115,7 +120,10 @@ fn ewf_write_with_md5_hash() {
         let seg = base.with_extension("e01");
         h.open_read(&[seg.as_path()]).expect("open_read");
 
-        let stored = h.md5_hash().expect("md5_hash getter").expect("hash not set");
+        let stored = h
+            .md5_hash()
+            .expect("md5_hash getter")
+            .expect("hash not set");
         assert_eq!(stored, digest, "stored MD5 does not match computed MD5");
         h.close().expect("close");
     }
