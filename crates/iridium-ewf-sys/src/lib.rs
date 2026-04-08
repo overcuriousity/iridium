@@ -120,9 +120,10 @@ unsafe extern "C" {
 
     /// Opens EWF segment file(s).
     ///
-    /// For reading: `filenames` lists all segment files (e.g. `["image.e01"]`).
-    /// For writing: `filenames[0]` is the first segment filename used verbatim
-    /// (e.g. `"image.e01"`). libewf does **not** append an extension.
+    /// For reading: `filenames` lists all segment files (e.g. `["image.E01"]`).
+    /// For writing: `filenames[0]` is the base name without extension; libewf
+    /// appends the format-appropriate extension automatically (e.g. `.E01` for
+    /// EnCase formats, `.s01` for SMART/EWF).
     ///
     /// Returns 1 on success, -1 on error.
     pub fn libewf_handle_open(
