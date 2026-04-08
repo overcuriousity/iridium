@@ -10,10 +10,21 @@ use std::os::unix::fs::FileExt;
 
 use crate::{DeviceError, Disk};
 
+/// Minimum buffer alignment for O_DIRECT: one memory page.
+/// Stricter than the bare-minimum (logical sector size) but unambiguous,
+/// architecture-safe, and the standard choice in forensic tooling.
+const PAGE_SIZE: usize = 4096;
+
 // ── Aligned buffer ────────────────────────────────────────────────────────────
 
 /// A heap-allocated buffer whose base address is aligned to `align` bytes.
-/// Required for O_DIRECT reads, which mandate kernel-page-aligned I/O.
+///
+/// For O_DIRECT, the kernel requires buffer alignment to at least the logical
+/// sector size. iridium uses `max(logical_sector_size, PAGE_SIZE)` — page
+/// alignment (≥4096 bytes) is stricter than strictly necessary but is the
+/// most defensible choice for forensic use: it is unambiguous in documentation,
+/// satisfies every architecture's O_DIRECT requirement, and eliminates any risk
+/// of an EINVAL from under-alignment.
 struct AlignedBuf {
     ptr: NonNull<u8>,
     layout: Layout,
@@ -108,11 +119,10 @@ impl DeviceReader {
                 // Total span to read (prefix bytes before requested data + the data).
                 let aligned_len = round_up(prefix + max_len, sector);
 
-                // Grow the scratch buffer if needed.
-                // `sector` is a power of two here (invariant from open_inner),
-                // so it is a valid Layout alignment.
+                // Grow the scratch buffer if needed, keeping the same
+                // max(sector, PAGE_SIZE) alignment invariant from open_inner.
                 if ab.len() < aligned_len {
-                    *ab = AlignedBuf::new(aligned_len, sector);
+                    *ab = AlignedBuf::new(aligned_len, sector.max(PAGE_SIZE));
                 }
 
                 let n = self
@@ -164,9 +174,11 @@ fn open_inner(
     if logical_sector_size.is_power_of_two() {
         match try_open(path, true) {
             Ok(file) => {
-                // logical_sector_size is a power of two here — valid as Layout alignment.
+                // Align to max(logical_sector_size, PAGE_SIZE) for forensic soundness.
+                // Both values are powers of two, so max is also a valid Layout alignment.
                 let sz = logical_sector_size as usize;
-                let aligned_buf = Some(AlignedBuf::new(sz, sz));
+                let align = sz.max(PAGE_SIZE);
+                let aligned_buf = Some(AlignedBuf::new(sz, align));
                 return Ok(DeviceReader {
                     file,
                     size_bytes,

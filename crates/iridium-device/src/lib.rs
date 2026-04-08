@@ -16,17 +16,11 @@ pub enum DeviceError {
     #[error("sysfs read error for {path}: {source}")]
     Sysfs { path: PathBuf, source: io::Error },
 
-    #[error("ioctl failed on {path}: {source}")]
-    Ioctl { path: PathBuf, source: nix::Error },
-
     #[error("open failed on {path}: {source}")]
     Open { path: PathBuf, source: nix::Error },
 
     #[error("read failed at offset {offset}: {source}")]
     Read { offset: u64, source: nix::Error },
-
-    #[error("permission denied — run as root or grant CAP_SYS_RAWIO for HPA/DCO detection")]
-    PermissionDenied,
 }
 
 // ── Disk ──────────────────────────────────────────────────────────────────────
@@ -107,6 +101,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires /dev nodes present in the test environment"]
     fn enumerate_paths_exist() {
         let disks = match Disk::enumerate() {
             Ok(d) => d,

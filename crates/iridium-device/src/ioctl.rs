@@ -35,8 +35,11 @@ const DCO_BIT: u16 = 1 << 11;
 nix::ioctl_read_bad!(hdio_drive_cmd, HDIO_DRIVE_CMD, [u8; 4 + 512]);
 
 /// Issue ATA IDENTIFY DEVICE and return the 512-byte IDENTIFY data.
-/// Returns `None` if the device is NVMe, the ioctl is not supported, or
-/// the process lacks permission (EPERM/EACCES — caller handles separately).
+///
+/// Returns `Ok(None)` for NVMe and loop devices (HDIO_DRIVE_CMD not applicable).
+/// Returns `Err(EPERM)` / `Err(EACCES)` when the process lacks privilege —
+/// the caller (`hpa_dco`) matches on those and logs a warning.
+/// Returns `Err(_)` for any other ioctl failure (ENOTTY, EINVAL, etc.).
 fn ata_identify(dev_path: &Path) -> Result<Option<[u16; 256]>, nix::Error> {
     // NVMe devices do not support HDIO_DRIVE_CMD.
     let name = dev_path
