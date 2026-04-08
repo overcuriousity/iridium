@@ -109,7 +109,7 @@ fn main() {
     let submodule_rev = git_head_rev(&vendor_src);
     let synced_sentinel = deps_dir.join(".synced");
     let sentinel_stale = fs::read_to_string(&synced_sentinel)
-        .map(|s| s.trim().to_owned() != submodule_rev)
+        .map(|s| s.trim() != submodule_rev)
         .unwrap_or(true);
 
     if sentinel_stale {

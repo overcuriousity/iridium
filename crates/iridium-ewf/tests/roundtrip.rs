@@ -26,14 +26,16 @@ fn ewf_write_read_roundtrip() {
     {
         let mut h = EwfHandle::new().expect("EwfHandle::new");
 
-        // Format/type/flags must be set before open_write; media_size must be
-        // set after open_write (required by the stable system libewf ABI).
+        // All metadata setters must be called after open_write on the
+        // system-installed libewf; media_size must also come after.
+        h.open_write(&base).expect("open_write");
         h.set_media_type(LIBEWF_MEDIA_TYPE_FIXED)
             .expect("set_media_type");
         h.set_media_flags(LIBEWF_MEDIA_FLAG_PHYSICAL)
             .expect("set_media_flags");
         h.set_format(LIBEWF_FORMAT_ENCASE6).expect("set_format");
         h.set_bytes_per_sector(512).expect("set_bytes_per_sector");
+        h.set_media_size(MIB as u64).expect("set_media_size");
 
         // Chain-of-custody metadata
         h.set_header_value(b"case_number", b"IRIDIUM-TEST-001")
@@ -42,9 +44,6 @@ fn ewf_write_read_roundtrip() {
             .expect("set examiner_name");
         h.set_header_value(b"description", b"1 MiB round-trip test image")
             .expect("set description");
-
-        h.open_write(&base).expect("open_write");
-        h.set_media_size(MIB as u64).expect("set_media_size");
 
         // Write in 64 KiB chunks
         let chunk = 64 * 1024;
@@ -102,8 +101,8 @@ fn ewf_write_with_md5_hash() {
 
     {
         let mut h = EwfHandle::new().expect("EwfHandle::new");
-        h.set_format(LIBEWF_FORMAT_ENCASE6).expect("set_format");
         h.open_write(&base).expect("open_write");
+        h.set_format(LIBEWF_FORMAT_ENCASE6).expect("set_format");
         h.set_media_size(MIB as u64).expect("set_media_size");
 
         for chunk in data.chunks(64 * 1024) {
