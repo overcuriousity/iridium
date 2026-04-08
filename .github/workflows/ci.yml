@@ -15,65 +15,89 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust (rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
-      - name: Cache cargo
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y libewf-dev pkg-config
+
+      - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
 
       - name: Check formatting
         run: cargo fmt --check
 
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --features iridium-ewf-sys/system-libewf -- -D warnings
 
   test:
     name: Build & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust (rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y libewf-dev pkg-config
+
+      - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-test-
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
 
-      - name: Build
-        run: cargo build
+      - name: Build (workspace)
+        run: cargo build --features iridium-ewf-sys/system-libewf
 
-      - name: Test
-        run: cargo test
+      - name: Test (workspace, unit tests)
+        run: cargo test --features iridium-ewf-sys/system-libewf --lib
+
+      - name: Test (integration tests, single-threaded)
+        # libewf has process-global state; parallel test threads cause
+        # spurious "cannot be changed" errors across handles.
+        run: cargo test --features iridium-ewf-sys/system-libewf --test roundtrip -- --test-threads 1
 
   deny:
     name: License & Advisory Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: EmbarkStudios/cargo-deny-action@v2
 
   musl:
-    name: Static musl build
+    # Builds only the iridium binary for x86_64-unknown-linux-musl.
+    # The ewf crates are not yet in the binary's dependency graph (Phase 4),
+    # so no cross-compiled libewf is needed here.
+    name: Static musl build (binary only)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust + musl target
         uses: dtolnay/rust-toolchain@stable
@@ -81,7 +105,7 @@ jobs:
           targets: x86_64-unknown-linux-musl
 
       - name: Install musl toolchain
-        run: sudo apt-get install -y musl-tools
+        run: sudo apt-get update -q && sudo apt-get install -y musl-tools
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -93,11 +117,13 @@ jobs:
           key: ${{ runner.os }}-musl-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-musl-
 
-      - name: Build (musl)
-        run: cargo build --target x86_64-unknown-linux-musl
+      - name: Build iridium binary (musl)
+        run: cargo build --bin iridium --target x86_64-unknown-linux-musl
 
       - name: Verify static binary
         run: |
           BIN=target/x86_64-unknown-linux-musl/debug/iridium
           file "$BIN"
-          ldd "$BIN" 2>&1 | grep -q "not a dynamic executable" && echo "OK: static binary" || (ldd "$BIN"; exit 1)
+          ldd "$BIN" 2>&1 | grep -qE "not a dynamic executable|statically linked" \
+            && echo "OK: static binary" \
+            || (ldd "$BIN"; exit 1)

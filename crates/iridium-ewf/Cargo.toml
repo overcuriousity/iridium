@@ -12,3 +12,7 @@ iridium-ewf-sys = { path = "../iridium-ewf-sys" }
 iridium-core    = { path = "../iridium-core" }
 thiserror.workspace = true
 libc.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+md-5.workspace = true

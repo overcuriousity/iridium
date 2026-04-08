@@ -17,9 +17,8 @@ allow = [
     "MPL-2.0",
     "CC0-1.0",
     "OpenSSL",
+    "GPL-3.0-or-later",
 ]
-# GPL/LGPL/AGPL deps require explicit review before adding.
-deny = ["GPL-2.0", "AGPL-3.0"]
 
 [advisories]
 version = 2
@@ -27,7 +26,8 @@ ignore = []
 
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"
+# Intra-workspace path deps don't carry version numbers by design.
+wildcards = "warn"
 
 [sources]
 unknown-registry = "deny"

@@ -9,10 +9,9 @@ description = "iridium — raw FFI bindings for libewf (statically linked)"
 links       = "ewf"
 
 [build-dependencies]
-# cc and bindgen will be added when Phase 1 is implemented
-# cc      = "1"
-# bindgen = "0.70"
+pkg-config = "0.3"
 
 [features]
-# Use system-installed libewf instead of vendored build (developer convenience)
+# Use system pkg-config instead of compiling libewf from vendor/ source.
+# Requires libewf-dev (Debian/Ubuntu) or libewf-devel (Fedora/RHEL).
 system-libewf = []
