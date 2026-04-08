@@ -4,7 +4,8 @@
 // API. All libewf errors are captured into `EwfError` and returned as `Result`.
 
 use std::{
-    ffi::{CString, c_char},
+    ffi::{c_char, CString},
+    marker::PhantomData,
     path::Path,
 };
 
@@ -47,14 +48,19 @@ unsafe fn harvest_error(mut raw: *mut sys::libewf_error_t) -> EwfError {
 // ── EwfHandle ─────────────────────────────────────────────────────────────────
 
 /// An owned libewf handle. Automatically closes and frees on drop.
+///
+/// `EwfHandle` is `!Send + !Sync`:
+/// - `inner` (`*mut libewf_handle_t`) already makes the type `!Send + !Sync`
+///   because raw pointers opt out of both auto-traits.
+/// - `_not_send_sync` (`PhantomData<*mut ()>`) makes that intent explicit and
+///   stable even if the struct fields are ever refactored.
+///
+/// libewf documents no thread-safety guarantees. Callers that need
+/// cross-thread access should wrap `EwfHandle` in a `Mutex`.
 pub struct EwfHandle {
     inner: *mut sys::libewf_handle_t,
+    _not_send_sync: PhantomData<*mut ()>,
 }
-
-// `EwfHandle` is `!Send + !Sync` automatically: `*mut libewf_handle_t` is a
-// raw pointer, and raw pointers opt out of both auto-traits by default.
-// libewf provides no documented thread-safety guarantee, so this is correct.
-// Callers that need cross-thread access should wrap `EwfHandle` in a `Mutex`.
 
 impl EwfHandle {
     // ── Constructor ──────────────────────────────────────────────────────
@@ -71,7 +77,10 @@ impl EwfHandle {
         if handle.is_null() {
             return Err(EwfError::NullPointer);
         }
-        Ok(Self { inner: handle })
+        Ok(Self {
+            inner: handle,
+            _not_send_sync: PhantomData,
+        })
     }
 
     // ── Metadata (call before open_write) ────────────────────────────────
