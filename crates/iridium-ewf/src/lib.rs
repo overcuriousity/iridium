@@ -4,7 +4,7 @@
 // API. All libewf errors are captured into `EwfError` and returned as `Result`.
 
 use std::{
-    ffi::{c_char, CString},
+    ffi::{CString, c_char},
     marker::PhantomData,
     path::Path,
 };

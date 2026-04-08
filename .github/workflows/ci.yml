@@ -71,8 +71,13 @@ jobs:
       - name: Build (workspace)
         run: cargo build --features iridium-ewf-sys/system-libewf
 
-      - name: Test (workspace)
-        run: cargo test --features iridium-ewf-sys/system-libewf
+      - name: Test (workspace, unit tests)
+        run: cargo test --features iridium-ewf-sys/system-libewf --lib
+
+      - name: Test (integration tests, single-threaded)
+        # libewf has process-global state; parallel test threads cause
+        # spurious "cannot be changed" errors across handles.
+        run: cargo test --features iridium-ewf-sys/system-libewf --test roundtrip -- --test-threads 1
 
   deny:
     name: License & Advisory Check
