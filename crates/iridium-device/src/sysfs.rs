@@ -9,7 +9,6 @@ use crate::{DeviceError, Disk, ioctl};
 
 const SYSFS_BLOCK: &str = "/sys/block";
 
-
 pub(crate) fn enumerate() -> Result<Vec<Disk>, DeviceError> {
     let mut disks = Vec::new();
 
@@ -210,7 +209,6 @@ fn read_attr_bool(sysfs: &Path, attr: &str) -> bool {
 mod tests {
     use super::*;
     use std::path::Path;
-
 
     #[test]
     fn partition_suffix_detection() {
