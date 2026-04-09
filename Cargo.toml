@@ -35,3 +35,5 @@ thiserror    = "2"
 log          = "0.4"
 # cross-crate channel
 crossbeam-channel = "0.5"
+# test helpers
+tempfile = "3"

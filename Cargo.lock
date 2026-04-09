@@ -305,7 +305,9 @@ dependencies = [
  "iridium-core",
  "iridium-device",
  "iridium-hash",
+ "log",
  "rayon",
+ "tempfile",
  "thiserror",
  "tokio",
 ]
@@ -348,6 +350,7 @@ version = "0.1.0"
 dependencies = [
  "iridium-core",
  "libc",
+ "log",
  "nix",
  "serde",
  "thiserror",
