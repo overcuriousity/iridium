@@ -68,7 +68,10 @@ impl Drop for AlignedBuf {
     }
 }
 
-// SAFETY: AlignedBuf owns its allocation exclusively; no shared references.
+// SAFETY: `NonNull<u8>` wraps a raw pointer, which is `!Send` by default.
+// The explicit impl is required — the compiler cannot auto-derive it.
+// It is sound because AlignedBuf exclusively owns its allocation and never
+// exposes the raw pointer outside the struct.
 unsafe impl Send for AlignedBuf {}
 
 // ── DeviceReader ──────────────────────────────────────────────────────────────

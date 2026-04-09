@@ -57,12 +57,10 @@ impl DeviceReader {
 
 ```
 crates/iridium-device/src/
-  lib.rs      — Disk, DeviceError, public re-exports
+  lib.rs      — Disk, DeviceError, public re-exports; #[cfg(test)] enumerate smoke tests
   sysfs.rs    — sysfs walk, attribute readers, partition enumeration
   ioctl.rs    — ATA IDENTIFY ioctl, HPA/DCO extraction
-  reader.rs   — DeviceReader: O_DIRECT, aligned buffer, pread64
-tests/
-  enumerate.rs — integration: enumerate() smoke, loop device presence
+  reader.rs   — DeviceReader: O_DIRECT, aligned buffer, pread64; #[cfg(test)] unit tests
 ```
 
 ## Step-by-step
