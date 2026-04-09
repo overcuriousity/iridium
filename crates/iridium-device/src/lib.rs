@@ -20,7 +20,11 @@ pub enum DeviceError {
     Open { path: PathBuf, source: nix::Error },
 
     #[error("read failed on {path} at offset {offset}: {source}")]
-    Read { path: PathBuf, offset: u64, source: nix::Error },
+    Read {
+        path: PathBuf,
+        offset: u64,
+        source: nix::Error,
+    },
 }
 
 // ── Disk ──────────────────────────────────────────────────────────────────────
@@ -56,7 +60,8 @@ pub struct Disk {
     pub removable: bool,
     /// `true` for spinning-platter drives; `false` for SSDs and NVMe.
     pub rotational: bool,
-    /// `true` if the kernel has opened the device read-only (e.g. write-blocker).
+    /// `true` if `/sys/block/*/ro` reports the device as read-only
+    /// (e.g. because a hardware write-blocker is attached).
     pub read_only: bool,
     /// For partitions: the path of the parent whole-disk device.
     /// `None` for whole-disk devices.
