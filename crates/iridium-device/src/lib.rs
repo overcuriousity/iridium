@@ -19,8 +19,8 @@ pub enum DeviceError {
     #[error("open failed on {path}: {source}")]
     Open { path: PathBuf, source: nix::Error },
 
-    #[error("read failed at offset {offset}: {source}")]
-    Read { offset: u64, source: nix::Error },
+    #[error("read failed on {path} at offset {offset}: {source}")]
+    Read { path: PathBuf, offset: u64, source: nix::Error },
 }
 
 // ── Disk ──────────────────────────────────────────────────────────────────────
@@ -81,8 +81,8 @@ impl Disk {
     /// Open the device for forensic read-only access.
     ///
     /// Uses `O_RDONLY | O_DIRECT | O_NOATIME`. If the device does not support
-    /// `O_DIRECT` the flag is dropped and a warning is printed; all other open
-    /// failures are returned as errors.
+    /// `O_DIRECT` the flag is dropped and a `log::warn!` warning is emitted;
+    /// all other open failures are returned as errors.
     pub fn open_read_only(&self) -> Result<DeviceReader, DeviceError> {
         reader::open_read_only(self)
     }

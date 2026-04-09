@@ -23,7 +23,7 @@ pub(crate) fn enumerate() -> Result<Vec<Disk>, DeviceError> {
         let entry = match entry {
             Ok(e) => e,
             Err(e) => {
-                eprintln!("iridium-device: skipping /sys/block entry: {e}");
+                log::warn!("iridium-device: skipping /sys/block entry: {e}");
                 continue;
             }
         };
@@ -37,7 +37,7 @@ pub(crate) fn enumerate() -> Result<Vec<Disk>, DeviceError> {
         let disk = match read_disk(&sysfs_dev, &dev_path, None) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("iridium-device: skipping {dev_path:?}: {e}");
+                log::warn!("iridium-device: skipping {dev_path:?}: {e}");
                 continue;
             }
         };
@@ -47,7 +47,7 @@ pub(crate) fn enumerate() -> Result<Vec<Disk>, DeviceError> {
         let parts = match partitions_of(&sysfs_dev) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("iridium-device: skipping partitions of {dev_path:?}: {e}");
+                log::warn!("iridium-device: skipping partitions of {dev_path:?}: {e}");
                 vec![]
             }
         };
@@ -59,7 +59,7 @@ pub(crate) fn enumerate() -> Result<Vec<Disk>, DeviceError> {
             let part_dev = PathBuf::from(format!("/dev/{part_name}"));
             match read_partition(&part, &part_dev, &sysfs_dev, &parent_path) {
                 Ok(d) => disks.push(d),
-                Err(e) => eprintln!("iridium-device: skipping partition {part_dev:?}: {e}"),
+                Err(e) => log::warn!("iridium-device: skipping partition {part_dev:?}: {e}"),
             }
         }
     }

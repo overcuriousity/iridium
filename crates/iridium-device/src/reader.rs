@@ -1,8 +1,8 @@
 // reader.rs — O_DIRECT forensic read-only device access with internal alignment.
 
 use std::{
-    alloc::{Layout, alloc, dealloc},
-    path::Path,
+    alloc::{Layout, alloc, dealloc, handle_alloc_error},
+    path::{Path, PathBuf},
     ptr::NonNull,
 };
 
@@ -45,7 +45,9 @@ impl AlignedBuf {
         let layout = Layout::from_size_align(size, align).expect("invalid layout");
         // SAFETY: layout is non-zero and valid.
         let raw = unsafe { alloc(layout) };
-        let ptr = NonNull::new(raw).expect("allocation failed");
+        // Use handle_alloc_error on OOM so the process aborts consistently with
+        // the standard library rather than unwinding through callers.
+        let ptr = NonNull::new(raw).unwrap_or_else(|| handle_alloc_error(layout));
         Self { ptr, layout }
     }
 
@@ -78,6 +80,8 @@ unsafe impl Send for AlignedBuf {}
 /// copied into the caller's (arbitrarily aligned) slice.
 pub struct DeviceReader {
     file: std::fs::File,
+    /// Device path carried for error reporting.
+    path: PathBuf,
     size_bytes: u64,
     /// Logical sector size used for O_DIRECT alignment (from `queue/logical_block_size`).
     logical_sector_size: u32,
@@ -109,6 +113,7 @@ impl DeviceReader {
                     .file
                     .read_at(&mut buf[..max_len], offset)
                     .map_err(|e| DeviceError::Read {
+                        path: self.path.clone(),
                         offset,
                         source: nix::Error::from(nix::errno::Errno::from_raw(
                             e.raw_os_error().unwrap_or(libc::EIO),
@@ -143,6 +148,7 @@ impl DeviceReader {
                     .file
                     .read_at(&mut ab.as_mut_slice()[..aligned_len], aligned_offset)
                     .map_err(|e| DeviceError::Read {
+                        path: self.path.clone(),
                         offset,
                         source: nix::Error::from(nix::errno::Errno::from_raw(
                             e.raw_os_error().unwrap_or(libc::EIO),
@@ -195,6 +201,7 @@ fn open_inner(
                 let aligned_buf = Some(AlignedBuf::new(sz, align));
                 return Ok(DeviceReader {
                     file,
+                    path: path.to_path_buf(),
                     size_bytes,
                     logical_sector_size,
                     aligned_buf,
@@ -202,7 +209,7 @@ fn open_inner(
             }
             Err(nix::Error::EINVAL) => {
                 // Device or filesystem does not support O_DIRECT — fall through.
-                eprintln!(
+                log::warn!(
                     "iridium-device: O_DIRECT not supported for {:?}, \
                      falling back to buffered reads (forensic integrity may be reduced)",
                     path
@@ -216,10 +223,11 @@ fn open_inner(
             }
         }
     } else {
-        eprintln!(
+        log::warn!(
             "iridium-device: non-power-of-two sector size {} for {:?}, \
              O_DIRECT not safe — using buffered reads",
-            logical_sector_size, path
+            logical_sector_size,
+            path
         );
     }
 
@@ -231,6 +239,7 @@ fn open_inner(
 
     Ok(DeviceReader {
         file,
+        path: path.to_path_buf(),
         size_bytes,
         logical_sector_size,
         aligned_buf: None,

@@ -89,14 +89,15 @@ fn ata_identify(dev_path: &Path) -> Result<Option<[u16; 256]>, nix::Error> {
 
 /// Return `(hpa_size_bytes, dco_restricted)` for a device.
 ///
-/// For NVMe / loop devices or on permission errors both values are
-/// `(None, false)` — the caller is not expected to surface this as an error
-/// during enumeration; it is logged implicitly by returning defaults.
+/// For NVMe / loop devices `Ok(None)` is returned silently (`(None, false)`).
+/// Permission errors emit a `log::warn!` and return `(None, false)`.
+/// Other ioctl errors (ENOTTY, EINVAL, etc.) indicate a non-ATA device and
+/// also return `(None, false)` silently — no warning is emitted.
 pub(crate) fn hpa_dco(dev_path: &Path, logical_sector_size: u32) -> (Option<u64>, bool) {
     match ata_identify(dev_path) {
         Ok(None) => (None, false), // NVMe / loop — not applicable
         Err(nix::Error::EPERM) | Err(nix::Error::EACCES) => {
-            eprintln!(
+            log::warn!(
                 "iridium-device: HPA/DCO detection skipped for {:?} \
                  (insufficient privileges — run as root for full detection)",
                 dev_path

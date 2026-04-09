@@ -16,7 +16,9 @@ NVMe, SAS), loop devices, and their partitions. Options considered:
 Enumerate devices via `/sys/block/` only. No udev, no libgudev.
 
 - Top-level entries in `/sys/block/` represent whole-disk devices.
-- Partition subdirectories (`/sys/block/{dev}/{dev}[0-9]*`) represent partitions.
+- Partition subdirectories of `/sys/block/{dev}/` represent partitions; they are
+  identified by the presence of a `partition` sysfs attribute, not by name
+  pattern (which varies: `sda1`, `nvme0n1p1`, `mmcblk0p1`, etc.).
 - Attributes (model, serial, size, sector size, rotational, removable, ro) are
   read from the sysfs attribute files exposed by the kernel.
 
