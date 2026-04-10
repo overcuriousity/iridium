@@ -4,6 +4,19 @@ mod md5;
 mod sha1;
 mod sha256;
 
+/// Encode `bytes` as a lowercase hex string.
+///
+/// Pre-allocates the exact capacity needed to avoid per-byte `String`
+/// allocations.
+pub(crate) fn hex_encode(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        write!(s, "{b:02x}").unwrap();
+    }
+    s
+}
+
 pub use md5::Md5Hasher;
 pub use sha1::Sha1Hasher;
 pub use sha256::Sha256Hasher;

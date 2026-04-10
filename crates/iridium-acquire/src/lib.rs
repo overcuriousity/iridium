@@ -70,7 +70,7 @@ pub enum ProgressEvent {
 #[derive(Debug, Clone)]
 pub struct AcquireResult {
     /// One digest per algorithm, in the same order as [`AcquireJob::algorithms`].
-    /// Empty if the acquisition was cancelled before any data was read.
+    /// Always empty when `complete` is `false` (cancelled acquisition).
     pub digests: Vec<Digest>,
     /// Total bytes successfully read from the device.
     pub bytes_read: u64,
@@ -86,8 +86,22 @@ pub enum AcquireError {
     #[error("at least one hash algorithm must be specified")]
     NoAlgorithms,
 
-    #[error("failed to open output file: {0}")]
-    WriterOpen(#[from] std::io::Error),
+    #[error("chunk_size must be greater than zero")]
+    InvalidChunkSize,
+
+    #[error("failed to open device {path}: {source}")]
+    DeviceOpen {
+        path: PathBuf,
+        #[source]
+        source: iridium_device::DeviceError,
+    },
+
+    #[error("failed to open output file {path}: {source}")]
+    WriterOpen {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 
     #[error("device read error at offset {offset}: {source}")]
     DeviceRead {

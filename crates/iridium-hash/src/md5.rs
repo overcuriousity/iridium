@@ -14,6 +14,12 @@ impl Md5Hasher {
     }
 }
 
+impl Default for Md5Hasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StreamHasher for Md5Hasher {
     fn update(&mut self, data: &[u8]) {
         md5::Digest::update(&mut self.0, data);
@@ -23,7 +29,7 @@ impl StreamHasher for Md5Hasher {
         let bytes = md5::Digest::finalize(self.0);
         Digest {
             algorithm: HashAlg::Md5,
-            hex: hex_encode(&bytes),
+            hex: crate::hex_encode(&bytes),
         }
     }
 
@@ -32,9 +38,6 @@ impl StreamHasher for Md5Hasher {
     }
 }
 
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
 
 #[cfg(test)]
 mod tests {

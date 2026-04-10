@@ -14,6 +14,12 @@ impl Sha256Hasher {
     }
 }
 
+impl Default for Sha256Hasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StreamHasher for Sha256Hasher {
     fn update(&mut self, data: &[u8]) {
         sha2::Digest::update(&mut self.0, data);
@@ -23,7 +29,7 @@ impl StreamHasher for Sha256Hasher {
         let bytes = sha2::Digest::finalize(self.0);
         Digest {
             algorithm: HashAlg::Sha256,
-            hex: hex_encode(&bytes),
+            hex: crate::hex_encode(&bytes),
         }
     }
 
@@ -32,9 +38,6 @@ impl StreamHasher for Sha256Hasher {
     }
 }
 
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
 
 #[cfg(test)]
 mod tests {

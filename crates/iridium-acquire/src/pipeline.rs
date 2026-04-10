@@ -17,6 +17,9 @@ pub(crate) fn run(
     if job.algorithms.is_empty() {
         return Err(AcquireError::NoAlgorithms);
     }
+    if job.chunk_size == 0 {
+        return Err(AcquireError::InvalidChunkSize);
+    }
 
     // TODO(phase-5): wire iridium-audit — log acquisition start with job metadata.
     audit_start(job);
@@ -35,14 +38,15 @@ pub(crate) fn run(
     let mut reader = job
         .source
         .open_read_only()
-        .map_err(|e| AcquireError::DeviceRead {
-            offset: 0,
+        .map_err(|e| AcquireError::DeviceOpen {
+            path: job.source.path.clone(),
             source: e,
         })?;
 
     loop {
         // Check for cancellation between chunks.
         if job.cancel.load(Ordering::Relaxed) {
+            writer.finalize()?;
             let result = AcquireResult {
                 digests: vec![],
                 bytes_read: offset,
@@ -73,13 +77,12 @@ pub(crate) fn run(
                 );
                 bad_sectors += 1;
                 let fill_len = chunk_size.min((total_bytes - offset) as usize);
-                // A previous successful read may have left stale bytes in buf;
-                // always use a freshly-zeroed allocation for the fill.
-                let zeroes_owned: Vec<u8> = vec![0u8; fill_len];
+                // Zero-fill the existing buffer slice to avoid a fresh allocation.
+                buf[..fill_len].fill(0);
                 for h in &mut hashers {
-                    h.update(&zeroes_owned);
+                    h.update(&buf[..fill_len]);
                 }
-                writer.write_chunk(&zeroes_owned)?;
+                writer.write_chunk(&buf[..fill_len])?;
                 fill_len
             }
         };

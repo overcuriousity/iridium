@@ -45,7 +45,7 @@ impl RawWriter {
             .create(true)
             .truncate(true)
             .open(&path)
-            .map_err(AcquireError::WriterOpen)?;
+            .map_err(|e| AcquireError::WriterOpen { path: path.clone(), source: e })?;
         Ok(Self { file, path })
     }
 
