@@ -38,7 +38,6 @@ impl StreamHasher for Sha1Hasher {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

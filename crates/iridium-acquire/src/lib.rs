@@ -31,8 +31,9 @@ pub struct AcquireJob {
     /// An aborted acquisition is forensically invalid; the result will have
     /// `complete: false`.
     pub cancel: Arc<AtomicBool>,
-    /// Optional channel for progress events.  The pipeline uses a non-blocking
-    /// `try_send`; dropped events are silently discarded if the receiver is slow.
+    /// Optional channel for progress events.  Terminal events (`Started`,
+    /// `Completed`, `Cancelled`) are sent with a blocking `send`; high-frequency
+    /// `Chunk` events use `try_send` and may be dropped under backpressure.
     pub progress_tx: Option<crossbeam_channel::Sender<ProgressEvent>>,
 }
 
@@ -72,8 +73,8 @@ pub struct AcquireResult {
     /// One digest per algorithm, in the same order as [`AcquireJob::algorithms`].
     /// Always empty when `complete` is `false` (cancelled acquisition).
     pub digests: Vec<Digest>,
-    /// Total bytes successfully read from the device.
-    pub bytes_read: u64,
+    /// Total bytes processed (read or zero-filled on error) from the device.
+    pub bytes_processed: u64,
     /// Number of chunks that produced a read error and were zero-filled.
     pub bad_sectors: u64,
     /// `false` if the acquisition was stopped by the cancel flag.
@@ -167,8 +168,9 @@ mod tests {
     }
 
     /// Build an AcquireJob backed by a loopback file instead of a real device.
-    /// Returns the job and the expected raw bytes for digest cross-checking.
-    fn make_job(data: &[u8], algorithms: Vec<HashAlg>) -> (AcquireJob, PathBuf) {
+    /// Returns the job and the `TempDir` guard; the caller must hold the guard
+    /// for the duration of the test so the directory is not deleted early.
+    fn make_job(data: &[u8], algorithms: Vec<HashAlg>) -> (AcquireJob, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let src_path = dir.path().join("source.img");
         std::fs::write(&src_path, data).unwrap();
@@ -191,24 +193,21 @@ mod tests {
         };
 
         let dest = dir.path().join("output");
-        // Keep dir alive by leaking it — acceptable in tests.
-        std::mem::forget(dir);
-
-        let job = AcquireJob::new(disk, dest.clone(), algorithms);
-        (job, dest)
+        let job = AcquireJob::new(disk, dest, algorithms);
+        (job, dir)
     }
 
     #[test]
     fn pipeline_produces_correct_digests() {
         let data = b"the quick brown fox jumps over the lazy dog";
         let algs = vec![HashAlg::Md5, HashAlg::Sha1, HashAlg::Sha256];
-        let (job, _dest) = make_job(data, algs.clone());
+        let (job, _dir) = make_job(data, algs.clone());
 
         let writer = Box::new(MemWriter(Vec::new()));
         let result = run_with_writer(job, writer).unwrap();
 
         assert!(result.complete);
-        assert_eq!(result.bytes_read, data.len() as u64);
+        assert_eq!(result.bytes_processed, data.len() as u64);
         assert_eq!(result.bad_sectors, 0);
         assert_eq!(result.digests.len(), 3);
 
@@ -225,15 +224,15 @@ mod tests {
     #[test]
     fn pipeline_written_bytes_match_source() {
         let data: Vec<u8> = (0u8..=255).cycle().take(4096).collect();
-        let (job, _dest) = make_job(&data, vec![HashAlg::Md5]);
+        let (job, _dir) = make_job(&data, vec![HashAlg::Md5]);
         let result = run_with_writer(job, Box::new(MemWriter(Vec::new()))).unwrap();
-        assert_eq!(result.bytes_read, data.len() as u64);
+        assert_eq!(result.bytes_processed, data.len() as u64);
     }
 
     #[test]
     fn cancel_before_first_chunk_returns_incomplete() {
         let data = b"should not be read";
-        let (job, _dest) = make_job(data, vec![HashAlg::Md5]);
+        let (job, _dir) = make_job(data, vec![HashAlg::Md5]);
 
         job.cancel.store(true, Ordering::Relaxed);
         let writer = Box::new(MemWriter(Vec::new()));
@@ -246,7 +245,7 @@ mod tests {
     #[test]
     fn no_algorithms_returns_error() {
         let data = b"x";
-        let (job, _dest) = make_job(data, vec![]);
+        let (job, _dir) = make_job(data, vec![]);
 
         let writer = Box::new(MemWriter(Vec::new()));
         assert!(matches!(

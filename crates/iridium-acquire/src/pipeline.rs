@@ -49,7 +49,7 @@ pub(crate) fn run(
             writer.finalize()?;
             let result = AcquireResult {
                 digests: vec![],
-                bytes_read: offset,
+                bytes_processed: offset,
                 bad_sectors,
                 complete: false,
             };
@@ -104,7 +104,7 @@ pub(crate) fn run(
 
     let result = AcquireResult {
         digests,
-        bytes_read: offset,
+        bytes_processed: offset,
         bad_sectors,
         complete: true,
     };
@@ -124,8 +124,18 @@ pub(crate) fn run(
 
 fn send(job: &AcquireJob, event: ProgressEvent) {
     if let Some(tx) = &job.progress_tx {
-        // Non-blocking: drop the event if the receiver is gone or the channel is full.
-        let _ = tx.try_send(event);
+        match event {
+            // Terminal and control events must be delivered if the receiver is alive.
+            ProgressEvent::Started { .. }
+            | ProgressEvent::Completed { .. }
+            | ProgressEvent::Cancelled { .. } => {
+                let _ = tx.send(event);
+            }
+            // High-frequency progress updates are best-effort under backpressure.
+            _ => {
+                let _ = tx.try_send(event);
+            }
+        }
     }
 }
 

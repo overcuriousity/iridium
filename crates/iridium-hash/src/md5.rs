@@ -38,7 +38,6 @@ impl StreamHasher for Md5Hasher {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

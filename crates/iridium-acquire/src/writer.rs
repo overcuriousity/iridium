@@ -45,7 +45,10 @@ impl RawWriter {
             .create(true)
             .truncate(true)
             .open(&path)
-            .map_err(|e| AcquireError::WriterOpen { path: path.clone(), source: e })?;
+            .map_err(|e| AcquireError::WriterOpen {
+                path: path.clone(),
+                source: e,
+            })?;
         Ok(Self { file, path })
     }
 
@@ -65,6 +68,10 @@ impl ImageWriter for RawWriter {
 
     fn finalize(mut self: Box<Self>) -> Result<(), AcquireError> {
         self.file.flush().map_err(|e| AcquireError::Write {
+            path: self.path.clone(),
+            source: e,
+        })?;
+        self.file.sync_all().map_err(|e| AcquireError::Write {
             path: self.path.clone(),
             source: e,
         })
