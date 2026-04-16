@@ -31,9 +31,10 @@ pub struct AcquireJob {
     /// An aborted acquisition is forensically invalid; the result will have
     /// `complete: false`.
     pub cancel: Arc<AtomicBool>,
-    /// Optional channel for progress events.  Terminal events (`Started`,
-    /// `Completed`, `Cancelled`) are sent with a blocking `send`; high-frequency
-    /// `Chunk` events use `try_send` and may be dropped under backpressure.
+    /// Optional channel for progress events.  The pipeline uses `try_send` for
+    /// all events so a slow or full channel never stalls acquisition.  Supply an
+    /// unbounded channel (`crossbeam_channel::unbounded`) if you need every event
+    /// delivered without drops.
     pub progress_tx: Option<crossbeam_channel::Sender<ProgressEvent>>,
 }
 
@@ -60,7 +61,7 @@ pub enum ProgressEvent {
     /// Emitted once before the first read.
     Started { total_bytes: u64 },
     /// Emitted after each chunk is written.
-    Chunk { bytes_done: u64, bad_sectors: u64 },
+    Chunk { bytes_done: u64, bad_chunks: u64 },
     /// Emitted when the pipeline finishes successfully.
     Completed { result: AcquireResult },
     /// Emitted when the pipeline is stopped by the cancel flag.
@@ -76,7 +77,7 @@ pub struct AcquireResult {
     /// Total bytes processed (read or zero-filled on error) from the device.
     pub bytes_processed: u64,
     /// Number of chunks that produced a read error and were zero-filled.
-    pub bad_sectors: u64,
+    pub bad_chunks: u64,
     /// `false` if the acquisition was stopped by the cancel flag.
     pub complete: bool,
 }
@@ -127,6 +128,14 @@ pub enum AcquireError {
 /// read → hash → write pipeline.  To use a different output format (e.g. EWF
 /// in Phase 4), call [`run_with_writer`] directly.
 pub fn run(job: AcquireJob) -> Result<AcquireResult, AcquireError> {
+    // Validate before creating/truncating the output file so an invalid job
+    // never leaves a zero-length image on disk.
+    if job.algorithms.is_empty() {
+        return Err(AcquireError::NoAlgorithms);
+    }
+    if job.chunk_size == 0 {
+        return Err(AcquireError::InvalidChunkSize);
+    }
     let writer = Box::new(RawWriter::create(&job.dest_path)?);
     pipeline::run(&job, writer)
 }
@@ -208,7 +217,7 @@ mod tests {
 
         assert!(result.complete);
         assert_eq!(result.bytes_processed, data.len() as u64);
-        assert_eq!(result.bad_sectors, 0);
+        assert_eq!(result.bad_chunks, 0);
         assert_eq!(result.digests.len(), 3);
 
         // Cross-check each digest against iridium-hash known-answer vectors.
@@ -257,7 +266,7 @@ mod tests {
     #[test]
     fn progress_events_emitted() {
         let data: Vec<u8> = vec![0u8; 512];
-        let (mut job, _dest) = make_job(&data, vec![HashAlg::Sha256]);
+        let (mut job, _dir) = make_job(&data, vec![HashAlg::Sha256]);
 
         let (tx, rx) = crossbeam_channel::unbounded();
         job.progress_tx = Some(tx);

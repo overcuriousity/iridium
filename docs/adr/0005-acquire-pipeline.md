@@ -24,7 +24,7 @@ Each iteration:
 4. Emit a `ProgressEvent::Chunk` on the progress channel.
 5. Check the cancel flag; abort cleanly if set.
 
-On a read error, the chunk is zero-filled, `bad_sectors` is incremented, and
+On a read error, the chunk is zero-filled, `bad_chunks` is incremented, and
 the loop continues (Phase 6 adds dd_rescue-style recovery).
 
 ## Rationale
@@ -42,8 +42,11 @@ the loop continues (Phase 6 adds dd_rescue-style recovery).
 - **The `ImageWriter` trait decouples output format from the loop.**  Phase 4
   drops in `EwfWriter` without touching `pipeline.rs`.
 
-- **`crossbeam-channel` handles progress delivery.**  The pipeline uses a
-  non-blocking `try_send` so a slow UI thread cannot stall acquisition.
+- **`crossbeam-channel` handles progress delivery.**  The pipeline uses
+  `try_send` for all events — including lifecycle events (`Started`,
+  `Completed`, `Cancelled`) — so a slow or bounded channel never stalls
+  acquisition.  Callers that need lossless delivery should supply an unbounded
+  channel.
 
 ## Consequences
 

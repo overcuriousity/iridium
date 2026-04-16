@@ -21,6 +21,14 @@ pub(crate) fn run(
         return Err(AcquireError::InvalidChunkSize);
     }
 
+    let mut reader = job
+        .source
+        .open_read_only()
+        .map_err(|e| AcquireError::DeviceOpen {
+            path: job.source.path.clone(),
+            source: e,
+        })?;
+
     // TODO(phase-5): wire iridium-audit — log acquisition start with job metadata.
     audit_start(job);
 
@@ -33,15 +41,7 @@ pub(crate) fn run(
     let chunk_size = job.chunk_size;
     let mut buf = vec![0u8; chunk_size];
     let mut offset: u64 = 0;
-    let mut bad_sectors: u64 = 0;
-
-    let mut reader = job
-        .source
-        .open_read_only()
-        .map_err(|e| AcquireError::DeviceOpen {
-            path: job.source.path.clone(),
-            source: e,
-        })?;
+    let mut bad_chunks: u64 = 0;
 
     loop {
         // Check for cancellation between chunks.
@@ -50,7 +50,7 @@ pub(crate) fn run(
             let result = AcquireResult {
                 digests: vec![],
                 bytes_processed: offset,
-                bad_sectors,
+                bad_chunks,
                 complete: false,
             };
             send(job, ProgressEvent::Cancelled { bytes_done: offset });
@@ -75,7 +75,7 @@ pub(crate) fn run(
                     "iridium-acquire: read error at offset {offset}: {e}; \
                      zero-filling chunk and continuing"
                 );
-                bad_sectors += 1;
+                bad_chunks += 1;
                 let fill_len = chunk_size.min((total_bytes - offset) as usize);
                 // Zero-fill the existing buffer slice to avoid a fresh allocation.
                 buf[..fill_len].fill(0);
@@ -93,7 +93,7 @@ pub(crate) fn run(
             job,
             ProgressEvent::Chunk {
                 bytes_done: offset,
-                bad_sectors,
+                bad_chunks,
             },
         );
     }
@@ -105,12 +105,12 @@ pub(crate) fn run(
     let result = AcquireResult {
         digests,
         bytes_processed: offset,
-        bad_sectors,
+        bad_chunks,
         complete: true,
     };
 
     send(
-        &job,
+        job,
         ProgressEvent::Completed {
             result: result.clone(),
         },
@@ -124,18 +124,10 @@ pub(crate) fn run(
 
 fn send(job: &AcquireJob, event: ProgressEvent) {
     if let Some(tx) = &job.progress_tx {
-        match event {
-            // Terminal and control events must be delivered if the receiver is alive.
-            ProgressEvent::Started { .. }
-            | ProgressEvent::Completed { .. }
-            | ProgressEvent::Cancelled { .. } => {
-                let _ = tx.send(event);
-            }
-            // High-frequency progress updates are best-effort under backpressure.
-            _ => {
-                let _ = tx.try_send(event);
-            }
-        }
+        // Best-effort: never let a slow or full channel stall acquisition.
+        // Callers that need guaranteed delivery of every event should supply
+        // an unbounded channel (crossbeam_channel::unbounded).
+        let _ = tx.try_send(event);
     }
 }
 
