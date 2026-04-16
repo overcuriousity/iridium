@@ -90,7 +90,7 @@ pub(crate) fn run(
         offset += n as u64;
 
         send(
-            &job,
+            job,
             ProgressEvent::Chunk {
                 bytes_done: offset,
                 bad_sectors,
