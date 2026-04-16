@@ -25,7 +25,7 @@ pub(crate) fn run(
     audit_start(job);
 
     let total_bytes = job.source.size_bytes;
-    send(&job, ProgressEvent::Started { total_bytes });
+    send(job, ProgressEvent::Started { total_bytes });
 
     let mut hashers: Vec<Box<dyn iridium_hash::StreamHasher>> =
         job.algorithms.iter().copied().map(new_hasher).collect();
@@ -53,7 +53,7 @@ pub(crate) fn run(
                 bad_sectors,
                 complete: false,
             };
-            send(&job, ProgressEvent::Cancelled { bytes_done: offset });
+            send(job, ProgressEvent::Cancelled { bytes_done: offset });
             // TODO(phase-5): wire iridium-audit — log cancellation.
             audit_end(&result);
             return Ok(result);
