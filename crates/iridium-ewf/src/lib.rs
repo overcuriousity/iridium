@@ -16,12 +16,10 @@ use thiserror::Error;
 // Re-export the libewf format/media constants so callers do not need to depend
 // on iridium-ewf-sys directly.
 pub use sys::{
-    LIBEWF_FORMAT_ENCASE1, LIBEWF_FORMAT_ENCASE2, LIBEWF_FORMAT_ENCASE3,
-    LIBEWF_FORMAT_ENCASE4, LIBEWF_FORMAT_ENCASE5, LIBEWF_FORMAT_ENCASE6,
-    LIBEWF_FORMAT_ENCASE7, LIBEWF_FORMAT_EWF, LIBEWF_FORMAT_EWFX,
-    LIBEWF_FORMAT_FTK_IMAGER, LIBEWF_FORMAT_LINEN5, LIBEWF_FORMAT_LINEN6,
-    LIBEWF_FORMAT_LINEN7, LIBEWF_FORMAT_SMART, LIBEWF_FORMAT_UNKNOWN,
-    LIBEWF_FORMAT_V2_ENCASE7,
+    LIBEWF_FORMAT_ENCASE1, LIBEWF_FORMAT_ENCASE2, LIBEWF_FORMAT_ENCASE3, LIBEWF_FORMAT_ENCASE4,
+    LIBEWF_FORMAT_ENCASE5, LIBEWF_FORMAT_ENCASE6, LIBEWF_FORMAT_ENCASE7, LIBEWF_FORMAT_EWF,
+    LIBEWF_FORMAT_EWFX, LIBEWF_FORMAT_FTK_IMAGER, LIBEWF_FORMAT_LINEN5, LIBEWF_FORMAT_LINEN6,
+    LIBEWF_FORMAT_LINEN7, LIBEWF_FORMAT_SMART, LIBEWF_FORMAT_UNKNOWN, LIBEWF_FORMAT_V2_ENCASE7,
     LIBEWF_MEDIA_FLAG_FASTBLOC, LIBEWF_MEDIA_FLAG_PHYSICAL, LIBEWF_MEDIA_FLAG_TABLEAU,
     LIBEWF_MEDIA_TYPE_FIXED, LIBEWF_MEDIA_TYPE_MEMORY, LIBEWF_MEDIA_TYPE_OPTICAL,
     LIBEWF_MEDIA_TYPE_REMOVABLE, LIBEWF_MEDIA_TYPE_SINGLE_FILES,
@@ -64,14 +62,15 @@ unsafe fn harvest_error(mut raw: *mut sys::libewf_error_t) -> EwfError {
 
 /// An owned libewf handle. Automatically closes and frees on drop.
 ///
-/// `EwfHandle` is `!Send + !Sync`:
-/// - `inner` (`*mut libewf_handle_t`) already makes the type `!Send + !Sync`
-///   because raw pointers opt out of both auto-traits.
-/// - `_not_send_sync` (`PhantomData<*mut ()>`) makes that intent explicit and
-///   stable even if the struct fields are ever refactored.
+/// **Thread safety:** `EwfHandle` is `Send` but `!Sync`.
+/// - It can be moved to another thread (e.g. sent to a background acquisition
+///   thread via `run_with_writer`).
+/// - It must not be accessed from multiple threads simultaneously. All methods
+///   take `&mut self`, which prevents concurrent use at the type level.
+/// - Callers needing shared cross-thread access must wrap in a `Mutex`.
 ///
-/// libewf documents no thread-safety guarantees. Callers that need
-/// cross-thread access should wrap `EwfHandle` in a `Mutex`.
+/// `_not_send_sync` (`PhantomData<*mut ()>`) keeps the type `!Sync` and
+/// documents the intent explicitly, even if the struct fields are refactored.
 pub struct EwfHandle {
     inner: *mut sys::libewf_handle_t,
     _not_send_sync: PhantomData<*mut ()>,

@@ -14,22 +14,24 @@ use crate::AcquireError;
 
 /// Sink that receives sequential chunks of device data.
 ///
-/// The pipeline calls [`write_chunk`] for every block it reads, then
-/// [`embed_digests`] once after all hashes are computed, then [`finalize`]
-/// exactly once. Implementations must be `Send` so the pipeline can run on
-/// any thread.
+/// On successful completion the pipeline calls: `write_chunk` (repeated) →
+/// `embed_digests` → `finalize`. On cancellation or a read error the pipeline
+/// calls `finalize` directly, without calling `embed_digests` first, so the
+/// output may be incomplete. Implementations must be `Send` so the pipeline
+/// can run on any thread.
 pub trait ImageWriter: Send {
     /// Write one chunk of data to the output.
     fn write_chunk(&mut self, data: &[u8]) -> Result<(), AcquireError>;
 
     /// Embed hash digest metadata into the output before finalization.
     ///
-    /// Called by the pipeline after all chunks have been hashed, before
-    /// [`finalize`]. The default implementation is a no-op; EWF-style writers
-    /// override this to embed hashes into the image metadata.
+    /// Called only on successful completion, after all chunks have been hashed
+    /// and before [`finalize`]. Not called on cancellation or pipeline errors.
+    /// The default is a no-op; EWF-style writers override this to store digest
+    /// strings in image metadata.
     fn embed_digests(&mut self, _digests: &[iridium_hash::Digest]) {}
 
-    /// Flush and close the output. Called exactly once, after [`embed_digests`].
+    /// Flush and close the output. Called exactly once as the last step.
     fn finalize(self: Box<Self>) -> Result<(), AcquireError>;
 }
 
@@ -95,6 +97,8 @@ pub struct EwfWriter {
     handle: EwfHandle,
     /// Base path passed to `open_write`; carried for error messages only.
     path: PathBuf,
+    /// First hash-embedding error from `embed_digests`, surfaced in `finalize`.
+    embed_error: Option<AcquireError>,
 }
 
 impl EwfWriter {
@@ -111,33 +115,40 @@ impl EwfWriter {
         size_bytes: u64,
         sector_size: u32,
     ) -> Result<Self, AcquireError> {
-        let ewf_err = |e| AcquireError::EwfOpen {
+        let open_err = |e| AcquireError::EwfOpen {
+            path: dest_path.to_path_buf(),
+            source: e,
+        };
+        let setup_err = |e| AcquireError::EwfWrite {
             path: dest_path.to_path_buf(),
             source: e,
         };
 
-        let mut handle = EwfHandle::new().map_err(ewf_err)?;
-        handle.open_write(dest_path).map_err(ewf_err)?;
+        let mut handle = EwfHandle::new().map_err(open_err)?;
+        handle.open_write(dest_path).map_err(open_err)?;
 
-        // These three calls configure the output format and media classification.
+        // These calls configure the already-open handle with format and media metadata.
         // The constants are stable libewf ABI values.
         handle
             .set_format(LIBEWF_FORMAT_ENCASE6)
-            .map_err(ewf_err)?;
+            .map_err(setup_err)?;
         handle
             .set_media_type(LIBEWF_MEDIA_TYPE_FIXED)
-            .map_err(ewf_err)?;
+            .map_err(setup_err)?;
         handle
             .set_media_flags(LIBEWF_MEDIA_FLAG_PHYSICAL)
-            .map_err(ewf_err)?;
+            .map_err(setup_err)?;
 
         // Sector size and total size must be set before the first write_buffer call.
-        handle.set_bytes_per_sector(sector_size).map_err(ewf_err)?;
-        handle.set_media_size(size_bytes).map_err(ewf_err)?;
+        handle
+            .set_bytes_per_sector(sector_size)
+            .map_err(setup_err)?;
+        handle.set_media_size(size_bytes).map_err(setup_err)?;
 
         Ok(Self {
             handle,
             path: dest_path.to_path_buf(),
+            embed_error: None,
         })
     }
 }
@@ -175,27 +186,33 @@ impl ImageWriter for EwfWriter {
                 HashAlg::Sha256 => b"SHA256",
             };
             if let Err(e) = self.handle.set_hash_value(id, d.hex.as_bytes()) {
-                log::warn!(
-                    "iridium-acquire: could not embed {:?} hash in EWF metadata: {e}",
-                    d.algorithm
-                );
+                // Store the first failure; finalize will surface it so the
+                // caller can detect forensically-incomplete output.
+                if self.embed_error.is_none() {
+                    self.embed_error = Some(AcquireError::EwfWrite {
+                        path: self.path.clone(),
+                        source: e,
+                    });
+                }
             }
         }
     }
 
     fn finalize(mut self: Box<Self>) -> Result<(), AcquireError> {
+        // Surface any hash-embedding failure before sealing the file.
+        if let Some(e) = self.embed_error.take() {
+            return Err(e);
+        }
         self.handle
             .write_finalize()
             .map_err(|e| AcquireError::EwfWrite {
                 path: self.path.clone(),
                 source: e,
             })?;
-        self.handle
-            .close()
-            .map_err(|e| AcquireError::EwfWrite {
-                path: self.path.clone(),
-                source: e,
-            })
+        self.handle.close().map_err(|e| AcquireError::EwfWrite {
+            path: self.path.clone(),
+            source: e,
+        })
     }
 }
 
@@ -272,9 +289,18 @@ mod tests {
         let mut w = EwfWriter::create(&dest, data.len() as u64, 512).unwrap();
         w.write_chunk(&data).unwrap();
         w.embed_digests(&[
-            Digest { algorithm: HashAlg::Md5,    hex: "d41d8cd98f00b204e9800998ecf8427e".into() },
-            Digest { algorithm: HashAlg::Sha1,   hex: "da39a3ee5e6b4b0d3255bfef95601890afd80709".into() },
-            Digest { algorithm: HashAlg::Sha256, hex: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into() },
+            Digest {
+                algorithm: HashAlg::Md5,
+                hex: "d41d8cd98f00b204e9800998ecf8427e".into(),
+            },
+            Digest {
+                algorithm: HashAlg::Sha1,
+                hex: "da39a3ee5e6b4b0d3255bfef95601890afd80709".into(),
+            },
+            Digest {
+                algorithm: HashAlg::Sha256,
+                hex: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into(),
+            },
         ]);
         Box::new(w).finalize().unwrap();
     }
@@ -282,7 +308,7 @@ mod tests {
     /// Verify pipeline calls embed_digests before finalize using a spy writer.
     #[test]
     fn pipeline_embed_digests_called_before_finalize() {
-        use crate::{AcquireJob, AcquireError, run_with_writer};
+        use crate::{AcquireError, AcquireJob, run_with_writer};
         use iridium_core::HashAlg;
         use iridium_device::Disk;
         use std::sync::{Arc, Mutex};
