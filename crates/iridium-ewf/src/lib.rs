@@ -73,12 +73,20 @@ unsafe fn harvest_error(mut raw: *mut sys::libewf_error_t) -> EwfError {
 /// documents the intent explicitly, even if the struct fields are refactored.
 pub struct EwfHandle {
     inner: *mut sys::libewf_handle_t,
+    /// True after a successful explicit `close()` call. `Drop` checks this
+    /// flag to avoid a double-close while still freeing the handle allocation.
+    closed: bool,
     _not_send_sync: PhantomData<*mut ()>,
 }
 
-// SAFETY: EwfHandle can be moved to another thread. libewf has no thread-safety
-// guarantees, but `&mut self` access prevents concurrent use. Callers needing
-// shared concurrent access must wrap in a Mutex.
+// SAFETY: `Send` permits transferring ownership of an `EwfHandle` to another
+// thread, not concurrent use. At the Rust level, all methods take `&mut self`,
+// so one handle cannot be used concurrently through aliased references.
+// Soundness additionally requires that libewf calls are serialized process-wide
+// (independent handles are not used concurrently on different threads), which
+// holds in the current architecture: each acquisition runs sequentially on one
+// thread and owns its handle exclusively. If future phases add concurrent
+// acquisitions, this invariant must be enforced with an external lock.
 unsafe impl Send for EwfHandle {}
 
 impl EwfHandle {
@@ -98,6 +106,7 @@ impl EwfHandle {
         }
         Ok(Self {
             inner: handle,
+            closed: false,
             _not_send_sync: PhantomData,
         })
     }
@@ -365,11 +374,12 @@ impl EwfHandle {
 
     /// Closes the underlying file(s). Also called automatically on `Drop`.
     ///
-    /// Sets `inner` to null after a successful close so that `Drop` does not
+    /// Sets `closed` to `true` after a successful close so that `Drop` does not
     /// attempt a second `libewf_handle_close`. libewf has process-global state
-    /// and a double-close corrupts it, causing subsequent handles to fail.
+    /// and a double-close corrupts it. `inner` is kept non-null so `Drop` can
+    /// still call `libewf_handle_free` to release the allocation.
     pub fn close(&mut self) -> Result<(), EwfError> {
-        if self.inner.is_null() {
+        if self.inner.is_null() || self.closed {
             return Ok(());
         }
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
@@ -377,8 +387,7 @@ impl EwfHandle {
         if rc != 0 {
             return Err(unsafe { harvest_error(error) });
         }
-        // Null out so Drop skips the close and only frees the handle.
-        self.inner = std::ptr::null_mut();
+        self.closed = true;
         Ok(())
     }
 }
@@ -388,12 +397,15 @@ impl Drop for EwfHandle {
         if self.inner.is_null() {
             return;
         }
-        // Best-effort close; ignore errors on drop.
-        let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
-        unsafe { sys::libewf_handle_close(self.inner, &mut error) };
-        if !error.is_null() {
-            unsafe { sys::libewf_error_free(&mut error) };
+        if !self.closed {
+            // Best-effort close; ignore errors on drop.
+            let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
+            unsafe { sys::libewf_handle_close(self.inner, &mut error) };
+            if !error.is_null() {
+                unsafe { sys::libewf_error_free(&mut error) };
+            }
         }
+        let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         unsafe { sys::libewf_handle_free(&mut self.inner, &mut error) };
         if !error.is_null() {
             unsafe { sys::libewf_error_free(&mut error) };

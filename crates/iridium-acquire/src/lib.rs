@@ -134,6 +134,20 @@ pub enum AcquireError {
     },
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Validate fields that would otherwise only fail deep inside the pipeline or
+/// after an output file has already been created.
+pub(crate) fn validate_job(job: &AcquireJob) -> Result<(), AcquireError> {
+    if job.algorithms.is_empty() {
+        return Err(AcquireError::NoAlgorithms);
+    }
+    if job.chunk_size == 0 {
+        return Err(AcquireError::InvalidChunkSize);
+    }
+    Ok(())
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 /// Run an acquisition to completion.
@@ -144,12 +158,7 @@ pub enum AcquireError {
 pub fn run(job: AcquireJob) -> Result<AcquireResult, AcquireError> {
     // Validate before creating/truncating the output file so an invalid job
     // never leaves a zero-length image on disk.
-    if job.algorithms.is_empty() {
-        return Err(AcquireError::NoAlgorithms);
-    }
-    if job.chunk_size == 0 {
-        return Err(AcquireError::InvalidChunkSize);
-    }
+    validate_job(&job)?;
     let writer = Box::new(RawWriter::create(&job.dest_path)?);
     pipeline::run(&job, writer)
 }
@@ -171,12 +180,7 @@ pub fn run_with_writer(
 /// libewf appends the `.E01` extension automatically — `job.dest_path` must
 /// not include an extension.
 pub fn run_ewf(job: AcquireJob) -> Result<AcquireResult, AcquireError> {
-    if job.algorithms.is_empty() {
-        return Err(AcquireError::NoAlgorithms);
-    }
-    if job.chunk_size == 0 {
-        return Err(AcquireError::InvalidChunkSize);
-    }
+    validate_job(&job)?;
     let writer = Box::new(EwfWriter::create(
         &job.dest_path,
         job.source.size_bytes,

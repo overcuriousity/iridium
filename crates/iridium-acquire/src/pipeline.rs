@@ -14,12 +14,7 @@ pub(crate) fn run(
     job: &AcquireJob,
     mut writer: Box<dyn ImageWriter>,
 ) -> Result<AcquireResult, AcquireError> {
-    if job.algorithms.is_empty() {
-        return Err(AcquireError::NoAlgorithms);
-    }
-    if job.chunk_size == 0 {
-        return Err(AcquireError::InvalidChunkSize);
-    }
+    crate::validate_job(job)?;
 
     let mut reader = job
         .source

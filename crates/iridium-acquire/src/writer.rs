@@ -199,10 +199,10 @@ impl ImageWriter for EwfWriter {
     }
 
     fn finalize(mut self: Box<Self>) -> Result<(), AcquireError> {
-        // Surface any hash-embedding failure before sealing the file.
-        if let Some(e) = self.embed_error.take() {
-            return Err(e);
-        }
+        // Always seal and close the image so the container is structurally
+        // valid even when hash embedding failed. Structural errors take
+        // priority; embed_error is reported only if sealing succeeded.
+        let embed_error = self.embed_error.take();
         self.handle
             .write_finalize()
             .map_err(|e| AcquireError::EwfWrite {
@@ -212,7 +212,11 @@ impl ImageWriter for EwfWriter {
         self.handle.close().map_err(|e| AcquireError::EwfWrite {
             path: self.path.clone(),
             source: e,
-        })
+        })?;
+        if let Some(e) = embed_error {
+            return Err(e);
+        }
+        Ok(())
     }
 }
 

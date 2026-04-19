@@ -36,10 +36,17 @@ hashers.finish() → writer.embed_digests(digests) → writer.finalize()
 ### 3. `unsafe impl Send for EwfHandle`
 
 `EwfHandle` was `!Send` (via `PhantomData<*mut ()>`). `ImageWriter: Send` is required so the
-pipeline can be moved to a background thread (Phase 7 GUI). Since `Send` means only "can be
-moved between threads" and all `EwfHandle` methods take `&mut self`, concurrent access is
-statically prevented. `unsafe impl Send for EwfHandle {}` is therefore sound; a `Mutex` is
-required only if callers need truly shared (multi-reader) access, which no current code does.
+pipeline can be moved to a background thread (Phase 7 GUI). `Send` permits transferring
+ownership of a handle to another thread; it does **not** by itself justify concurrent use of
+multiple `EwfHandle`s on different threads simultaneously.
+
+At the Rust level, all `EwfHandle` methods take `&mut self`, so one handle cannot be used
+concurrently through aliased references. Soundness additionally relies on the libewf-side
+invariant that libewf calls are serialized process-wide — independent handles are not driven
+concurrently on different threads. This invariant holds in the current architecture: each
+acquisition runs sequentially on a single thread and owns its handle exclusively. If a future
+phase adds concurrent acquisitions, an external lock must enforce serialization before this
+`Send` impl remains sound.
 
 ### 4. Short-write loop in `write_chunk`
 
