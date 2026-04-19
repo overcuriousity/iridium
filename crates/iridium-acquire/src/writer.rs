@@ -115,6 +115,15 @@ impl EwfWriter {
         size_bytes: u64,
         sector_size: u32,
     ) -> Result<Self, AcquireError> {
+        if dest_path.extension().is_some() {
+            return Err(AcquireError::EwfOpen {
+                path: dest_path.to_path_buf(),
+                source: iridium_ewf::EwfError::InvalidPath(
+                    "dest_path must not include an extension; libewf appends .E01 automatically"
+                        .into(),
+                ),
+            });
+        }
         let open_err = |e| AcquireError::EwfOpen {
             path: dest_path.to_path_buf(),
             source: e,

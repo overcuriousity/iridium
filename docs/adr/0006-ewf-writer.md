@@ -41,12 +41,12 @@ ownership of a handle to another thread; it does **not** by itself justify concu
 multiple `EwfHandle`s on different threads simultaneously.
 
 At the Rust level, all `EwfHandle` methods take `&mut self`, so one handle cannot be used
-concurrently through aliased references. Soundness additionally relies on the libewf-side
-invariant that libewf calls are serialized process-wide — independent handles are not driven
-concurrently on different threads. This invariant holds in the current architecture: each
-acquisition runs sequentially on a single thread and owns its handle exclusively. If a future
-phase adds concurrent acquisitions, an external lock must enforce serialization before this
-`Send` impl remains sound.
+concurrently through aliased references. Soundness additionally requires that libewf calls are
+serialized process-wide — independent handles must not be driven concurrently from different
+threads. Because this is a safety requirement for `unsafe impl Send`, it is **enforced inside
+`iridium-ewf`** rather than assumed from caller behaviour: a `static LIBEWF_LOCK: Mutex<()>`
+is acquired at the start of every FFI-calling method, including `Drop`. Safe Rust code cannot
+bypass this lock, so the `Send` impl is sound regardless of how many handles or threads exist.
 
 ### 4. Short-write loop in `write_chunk`
 
