@@ -13,6 +13,20 @@ use std::{
 use iridium_ewf_sys as sys;
 use thiserror::Error;
 
+// Re-export the libewf format/media constants so callers do not need to depend
+// on iridium-ewf-sys directly.
+pub use sys::{
+    LIBEWF_FORMAT_ENCASE1, LIBEWF_FORMAT_ENCASE2, LIBEWF_FORMAT_ENCASE3,
+    LIBEWF_FORMAT_ENCASE4, LIBEWF_FORMAT_ENCASE5, LIBEWF_FORMAT_ENCASE6,
+    LIBEWF_FORMAT_ENCASE7, LIBEWF_FORMAT_EWF, LIBEWF_FORMAT_EWFX,
+    LIBEWF_FORMAT_FTK_IMAGER, LIBEWF_FORMAT_LINEN5, LIBEWF_FORMAT_LINEN6,
+    LIBEWF_FORMAT_LINEN7, LIBEWF_FORMAT_SMART, LIBEWF_FORMAT_UNKNOWN,
+    LIBEWF_FORMAT_V2_ENCASE7,
+    LIBEWF_MEDIA_FLAG_FASTBLOC, LIBEWF_MEDIA_FLAG_PHYSICAL, LIBEWF_MEDIA_FLAG_TABLEAU,
+    LIBEWF_MEDIA_TYPE_FIXED, LIBEWF_MEDIA_TYPE_MEMORY, LIBEWF_MEDIA_TYPE_OPTICAL,
+    LIBEWF_MEDIA_TYPE_REMOVABLE, LIBEWF_MEDIA_TYPE_SINGLE_FILES,
+};
+
 // ── Error type ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Error)]
@@ -62,6 +76,11 @@ pub struct EwfHandle {
     inner: *mut sys::libewf_handle_t,
     _not_send_sync: PhantomData<*mut ()>,
 }
+
+// SAFETY: EwfHandle can be moved to another thread. libewf has no thread-safety
+// guarantees, but `&mut self` access prevents concurrent use. Callers needing
+// shared concurrent access must wrap in a Mutex.
+unsafe impl Send for EwfHandle {}
 
 impl EwfHandle {
     // ── Constructor ──────────────────────────────────────────────────────

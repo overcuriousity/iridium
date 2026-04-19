@@ -98,9 +98,13 @@ pub(crate) fn run(
         );
     }
 
-    writer.finalize()?;
-
     let digests: Vec<_> = hashers.into_iter().map(|h| h.finish()).collect();
+
+    // Allow the writer to embed hash metadata before the file is sealed.
+    // RawWriter ignores this; EwfWriter uses it to store digest strings.
+    writer.embed_digests(&digests);
+
+    writer.finalize()?;
 
     let result = AcquireResult {
         digests,
