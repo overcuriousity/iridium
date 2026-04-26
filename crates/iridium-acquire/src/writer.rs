@@ -15,10 +15,11 @@ use crate::AcquireError;
 /// Sink that receives sequential chunks of device data.
 ///
 /// On successful completion the pipeline calls: `write_chunk` (repeated) →
-/// `embed_digests` → `finalize`. On cancellation or a read error the pipeline
-/// calls `finalize` directly, without calling `embed_digests` first, so the
-/// output may be incomplete. Implementations must be `Send` so the pipeline
-/// can run on any thread.
+/// `embed_digests` → `finalize`. On cancellation, the pipeline calls
+/// `finalize` without first calling `embed_digests`, so the output may be
+/// incomplete. Read errors do not cause an immediate call to `finalize`; the
+/// pipeline zero-fills the affected chunk and continues. Implementations must
+/// be `Send` so the pipeline can run on any thread.
 pub trait ImageWriter: Send {
     /// Write one chunk of data to the output.
     fn write_chunk(&mut self, data: &[u8]) -> Result<(), AcquireError>;

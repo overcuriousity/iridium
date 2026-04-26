@@ -130,9 +130,15 @@ impl EwfHandle {
         })
     }
 
-    // ── Metadata (call before open_write) ────────────────────────────────
+    // ── Metadata (call after open_write, before first write_buffer) ──────
+    //
+    // libewf rejects metadata setter calls until the handle has been opened,
+    // and several values (notably media size and bytes-per-sector) are baked
+    // into the segment headers as soon as the first chunk is written. Call
+    // these setters between `open_write` and the first `write_buffer`.
 
-    /// Sets the total image size in bytes. Must be called before the first write.
+    /// Sets the total image size in bytes. Must be called after `open_write`
+    /// and before the first `write_buffer`.
     pub fn set_media_size(&mut self, size: u64) -> Result<(), EwfError> {
         let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
@@ -143,8 +149,8 @@ impl EwfHandle {
         Ok(())
     }
 
-    /// Sets the media type. Use the `LIBEWF_MEDIA_TYPE_*` constants from
-    /// `iridium_ewf_sys`.
+    /// Sets the media type. Use the `LIBEWF_MEDIA_TYPE_*` constants
+    /// re-exported from `iridium_ewf`.
     pub fn set_media_type(&mut self, media_type: u8) -> Result<(), EwfError> {
         let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
@@ -214,8 +220,9 @@ impl EwfHandle {
 
     /// Stores a hash value as a UTF-8 hex string in the EWF metadata.
     ///
-    /// `identifier` is `b"MD5"` or `b"SHA1"`.
-    /// `hex_digest` is the lowercase hex string.
+    /// `identifier` is the libewf hash algorithm identifier as a byte string,
+    /// for example `b"MD5"`, `b"SHA1"`, or `b"SHA256"`.
+    /// `hex_digest` is the hexadecimal digest string for that algorithm.
     pub fn set_hash_value(&mut self, identifier: &[u8], hex_digest: &[u8]) -> Result<(), EwfError> {
         let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
