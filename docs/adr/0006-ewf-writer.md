@@ -24,14 +24,33 @@ the cycle and keeps the writer abstraction in one place.
 libewf requires hash values to be set on the handle **before** `write_finalize()` is called.
 The pipeline previously finalized the writer before computing digests. To preserve the
 `ImageWriter` contract without breaking `RawWriter` or requiring callers to orchestrate
-two-phase finalization manually, a default `embed_digests(&mut self, digests: &[Digest])`
-method was added to the trait. The pipeline calls it after hashing but before `finalize`:
+two-phase finalization manually, a default
+`embed_digests(&mut self, digests: &[Digest]) -> Result<(), AcquireError>` method was added
+to the trait. The pipeline calls it after hashing but before `finalize`:
 
 ```
 hashers.finish() → writer.embed_digests(digests) → writer.finalize()
 ```
 
 `RawWriter` keeps the inherited no-op default. Only EWF-style writers need to override it.
+
+The pipeline always calls `finalize` even when `embed_digests` returns an error: the
+container must be sealed so it is structurally valid on disk, and the embed error is
+surfaced after the seal succeeds. If sealing also fails, the structural error wins. This
+policy lives in `pipeline.rs` rather than inside individual writers.
+
+### 2b. `discard` method for the cancellation path
+
+The pipeline previously called `finalize` on cancellation. For container-format writers
+this is wrong: with `media_size` set to the full disk size and only a fraction of bytes
+written, `libewf_handle_write_finalize` either fails outright or seals a structurally-
+invalid container whose declared size does not match its contents.
+
+`ImageWriter::discard(self: Box<Self>)` is now called instead of `finalize` when the
+acquisition is cancelled. The default delegates to `finalize` (preserving `RawWriter`'s
+behaviour: a partial flat image is still readable and useful for debugging). `EwfWriter`
+overrides `discard` to skip `write_finalize`, close the handle, and best-effort delete
+every `<base>.E0*` segment file, leaving no half-built EWF on disk.
 
 ### 3. `unsafe impl Send for EwfHandle`
 
@@ -72,8 +91,8 @@ are re-exported from `iridium-ewf` so callers do not need a direct dependency on
 
 - `run_ewf(job)` is the one-line entry point for EWF output; `run_with_writer` remains the
   extension point for custom writers.
-- Cancelled acquisitions produce an EWF without embedded hashes (write_finalize still runs;
-  the file is valid but forensically incomplete by design).
+- Cancelled acquisitions leave no EWF on disk: `EwfWriter::discard` skips sealing and
+  removes the partial segments. Cancel telemetry still reports `bytes_processed`.
 - Phase 5 (audit log) will record digest values from `AcquireResult::digests`, which are
   computed in the pipeline regardless of output format.
 - Phase 8 will vendor libewf via autotools; `EwfWriter` is unaffected by that build change.

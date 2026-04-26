@@ -161,7 +161,8 @@ impl EwfHandle {
         Ok(())
     }
 
-    /// Sets the media flags. Use the `LIBEWF_MEDIA_FLAG_*` constants.
+    /// Sets the media flags. Use the `LIBEWF_MEDIA_FLAG_*` constants
+    /// re-exported from `iridium_ewf`.
     pub fn set_media_flags(&mut self, flags: u8) -> Result<(), EwfError> {
         let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
@@ -172,8 +173,8 @@ impl EwfHandle {
         Ok(())
     }
 
-    /// Sets the output format. Use the `LIBEWF_FORMAT_*` constants.
-    /// Defaults to EnCase 6 if not called.
+    /// Sets the output format. Use the `LIBEWF_FORMAT_*` constants
+    /// re-exported from `iridium_ewf`. Defaults to EnCase 6 if not called.
     pub fn set_format(&mut self, format: u8) -> Result<(), EwfError> {
         let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();

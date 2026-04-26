@@ -14,6 +14,9 @@ pub(crate) fn run(
     job: &AcquireJob,
     mut writer: Box<dyn ImageWriter>,
 ) -> Result<AcquireResult, AcquireError> {
+    // `validate_job` already runs in the public entry points before the
+    // output file is created. This is the second line of defence for direct
+    // callers of `run_with_writer`, which accept a pre-built writer.
     crate::validate_job(job)?;
 
     let mut reader = job
@@ -41,7 +44,7 @@ pub(crate) fn run(
     loop {
         // Check for cancellation between chunks.
         if job.cancel.load(Ordering::Relaxed) {
-            writer.finalize()?;
+            writer.discard()?;
             let result = AcquireResult {
                 digests: vec![],
                 bytes_processed: offset,
@@ -97,9 +100,11 @@ pub(crate) fn run(
 
     // Allow the writer to embed hash metadata before the file is sealed.
     // RawWriter ignores this; EwfWriter uses it to store digest strings.
-    writer.embed_digests(&digests);
-
+    // Always finalize so the container is structurally valid; if both fail,
+    // the structural error takes priority.
+    let embed_result = writer.embed_digests(&digests);
     writer.finalize()?;
+    embed_result?;
 
     let result = AcquireResult {
         digests,
