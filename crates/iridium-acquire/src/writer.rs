@@ -175,9 +175,15 @@ impl EwfWriter {
     /// path and whose extension starts with `E`. Errors are logged and ignored
     /// — the cancel path must not fail just because cleanup couldn't complete.
     fn delete_segments(&self) {
-        let Some(parent) = self.path.parent() else { return };
-        let Some(stem) = self.path.file_name() else { return };
-        let Ok(entries) = std::fs::read_dir(parent) else { return };
+        let Some(parent) = self.path.parent() else {
+            return;
+        };
+        let Some(stem) = self.path.file_name() else {
+            return;
+        };
+        let Ok(entries) = std::fs::read_dir(parent) else {
+            return;
+        };
         for entry in entries.flatten() {
             let p = entry.path();
             if p.file_stem() == Some(stem)
