@@ -80,9 +80,11 @@ impl Log {
     pub fn append(&self, event: &AuditEvent) -> Result<(), AuditError> {
         let line = serde_json::to_string(event).map_err(|e| AuditError::Encode { source: e })?;
 
-        // Append the newline before locking so the write is a single syscall.
-        // This prevents another writer from interleaving between the JSON bytes
-        // and the newline when multiple processes share one log file.
+        // Build the full JSONL record before taking the mutex so the JSON bytes
+        // and trailing newline are written in one write_all while the lock is held.
+        // This prevents interleaving between threads sharing this Log instance,
+        // but does not guarantee cross-process atomicity (write_all may still issue
+        // multiple syscalls on partial writes).
         let mut line = line;
         line.push('\n');
 

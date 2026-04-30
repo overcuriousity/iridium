@@ -40,9 +40,11 @@ timezone offset) via `time::serde::rfc3339`.
 
 ### 4. `time` crate for timestamps
 
-`time 0.3` was added as a workspace dependency (`features = ["serde", "formatting"]`).  It
-produces compact, lossless RFC 3339 strings, has no C dependencies (clean static-musl build),
-and its licence (MIT/Apache-2.0) is already covered by the `deny.toml` allow-list.  `chrono`
+`time 0.3` was added as a workspace dependency (`features = ["serde", "formatting",
+"parsing"]`).  `formatting` is required to emit RFC 3339 timestamp strings; `parsing` is
+required for `Deserialize` support via `time::serde::rfc3339` (needed by `AuditEvent`'s
+`#[derive(Deserialize)]`).  The crate has no C dependencies (clean static-musl build), and
+its licence (MIT/Apache-2.0) is already covered by the `deny.toml` allow-list.  `chrono`
 was considered but rejected due to a historically larger MSRV surface and the
 `RUSTSEC-2020-0159` time-zone-related soundness issue.
 

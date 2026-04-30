@@ -34,7 +34,9 @@ pub(crate) fn run(
         ts: OffsetDateTime::now_utc(),
         iridium_version: env!("CARGO_PKG_VERSION").to_owned(),
         libewf_version: iridium_ewf::libewf_version().to_owned(),
-        argv: std::env::args().collect(),
+        argv: std::env::args_os()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect(),
         job: job_metadata(job),
     });
 
