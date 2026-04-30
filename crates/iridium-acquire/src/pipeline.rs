@@ -170,10 +170,10 @@ fn send(job: &AcquireJob, event: ProgressEvent) {
 /// auditing is disabled.  Append failures are reported via `log::warn!` and
 /// never abort the acquisition.
 fn emit_audit(job: &AcquireJob, make_event: impl FnOnce() -> AuditEvent) {
-    if let Some(audit_log) = &job.audit {
-        if let Err(e) = audit_log.append(&make_event()) {
-            log::warn!("iridium-audit: failed to append audit event: {e}");
-        }
+    if let Some(audit_log) = &job.audit
+        && let Err(e) = audit_log.append(&make_event())
+    {
+        log::warn!("iridium-audit: failed to append audit event: {e}");
     }
 }
 
