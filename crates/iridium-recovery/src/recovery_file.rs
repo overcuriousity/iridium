@@ -9,11 +9,14 @@ use std::{
 
 /// A pre-allocated output image file that supports writes at arbitrary offsets.
 ///
-/// Created with `O_WRONLY | O_CREAT | O_TRUNC`.  `set_len(size_bytes)` is
+/// Opened with `O_WRONLY | O_CREAT | O_TRUNC`.  `set_len(size_bytes)` is
 /// called immediately so the file is sparse-ready: unwritten regions read as
 /// zeros on any POSIX filesystem that supports sparse files (ext4, xfs, btrfs,
 /// tmpfs).  On filesystems without sparse support (e.g. FAT32) the pre-alloc
 /// blocks for the entire `size_bytes` upfront.
+///
+/// Reading the completed image is done by the hash pass, which opens the file
+/// by path via a separate `File::open` handle.
 pub struct RecoveryFile {
     file: File,
     path: PathBuf,
@@ -25,13 +28,16 @@ impl RecoveryFile {
     /// `size_bytes` bytes.
     pub fn create(path: &Path, size_bytes: u64) -> io::Result<Self> {
         let file = OpenOptions::new()
-            .read(true)
             .write(true)
             .create(true)
             .truncate(true)
             .open(path)?;
         file.set_len(size_bytes)?;
-        Ok(Self { file, path: path.to_owned(), size_bytes })
+        Ok(Self {
+            file,
+            path: path.to_owned(),
+            size_bytes,
+        })
     }
 
     /// Write `data` starting at `offset` bytes from the beginning of the file.
@@ -56,7 +62,6 @@ impl RecoveryFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     #[test]
     fn create_preallocates_correct_size() {

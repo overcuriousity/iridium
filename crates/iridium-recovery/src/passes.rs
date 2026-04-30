@@ -1,10 +1,6 @@
 // passes.rs — forward, trim, and scrape passes for recovery mode.
 
-use std::{
-    io,
-    sync::atomic::Ordering,
-    time::Instant,
-};
+use std::{io, sync::atomic::Ordering, time::Instant};
 
 use iridium_acquire::{AcquireJob, ProgressEvent};
 use iridium_audit::AuditEvent;
@@ -64,7 +60,6 @@ pub fn forward_pass(
 
     while offset < total {
         if job.cancel.load(Ordering::Relaxed) {
-            flush_map_and_notify(map, job, opts)?;
             return Ok(false);
         }
 
@@ -73,20 +68,24 @@ pub fn forward_pass(
         match reader.read_at(offset, &mut buf[..len]) {
             Ok(0) => break,
             Ok(n) => {
-                file.write_at(offset, &buf[..n]).map_err(|e| RecoveryError::Write {
-                    path: file.path().to_owned(),
-                    source: e,
-                })?;
+                file.write_at(offset, &buf[..n])
+                    .map_err(|e| RecoveryError::Write {
+                        path: file.path().to_owned(),
+                        source: e,
+                    })?;
                 map.mark(offset, n as u64, Status::Finished);
+                map.current_status = Status::Finished;
                 offset += n as u64;
             }
             Err(e) => {
                 buf[..len].fill(0);
-                file.write_at(offset, &buf[..len]).map_err(|e| RecoveryError::Write {
-                    path: file.path().to_owned(),
-                    source: e,
-                })?;
+                file.write_at(offset, &buf[..len])
+                    .map_err(|e| RecoveryError::Write {
+                        path: file.path().to_owned(),
+                        source: e,
+                    })?;
                 map.mark(offset, len as u64, Status::NonTrimmed);
+                map.current_status = Status::NonTrimmed;
                 emit_audit(job, || AuditEvent::RecoveryReadError {
                     ts: OffsetDateTime::now_utc(),
                     offset,
@@ -143,7 +142,6 @@ pub fn trim_pass(
         while fwd < reg_end {
             if job.cancel.load(Ordering::Relaxed) {
                 map.current_pos = fwd;
-                flush_map_and_notify(map, job, opts)?;
                 return Ok(false);
             }
 
@@ -151,11 +149,13 @@ pub fn trim_pass(
 
             match reader.read_at(fwd, &mut buf[..len]) {
                 Ok(n) if n > 0 => {
-                    file.write_at(fwd, &buf[..n]).map_err(|e| RecoveryError::Write {
-                        path: file.path().to_owned(),
-                        source: e,
-                    })?;
+                    file.write_at(fwd, &buf[..n])
+                        .map_err(|e| RecoveryError::Write {
+                            path: file.path().to_owned(),
+                            source: e,
+                        })?;
                     map.mark(fwd, n as u64, Status::Finished);
+                    map.current_status = Status::Finished;
                     fwd += n as u64;
                 }
                 _ => break,
@@ -184,8 +184,8 @@ pub fn trim_pass(
                 // Mark whatever remains between fwd and bwd as NonScraped.
                 if fwd < bwd {
                     map.mark(fwd, bwd - fwd, Status::NonScraped);
+                    map.current_status = Status::NonScraped;
                 }
-                flush_map_and_notify(map, job, opts)?;
                 return Ok(false);
             }
 
@@ -194,11 +194,13 @@ pub fn trim_pass(
 
             match reader.read_at(read_start, &mut buf[..read_len]) {
                 Ok(n) if n > 0 => {
-                    file.write_at(read_start, &buf[..n]).map_err(|e| RecoveryError::Write {
-                        path: file.path().to_owned(),
-                        source: e,
-                    })?;
+                    file.write_at(read_start, &buf[..n])
+                        .map_err(|e| RecoveryError::Write {
+                            path: file.path().to_owned(),
+                            source: e,
+                        })?;
                     map.mark(read_start, n as u64, Status::Finished);
+                    map.current_status = Status::Finished;
                     bwd = read_start;
                 }
                 _ => break,
@@ -252,7 +254,6 @@ pub fn scrape_pass(
         while pos < reg_end {
             if job.cancel.load(Ordering::Relaxed) {
                 map.current_pos = pos;
-                flush_map_and_notify(map, job, opts)?;
                 return Ok(false);
             }
 
@@ -263,23 +264,30 @@ pub fn scrape_pass(
             for _attempt in 0..=opts.max_retries {
                 match reader.read_at(pos, &mut buf[..len]) {
                     Ok(n) if n > 0 => {
-                        file.write_at(pos, &buf[..n]).map_err(|e| RecoveryError::Write {
-                            path: file.path().to_owned(),
-                            source: e,
-                        })?;
+                        file.write_at(pos, &buf[..n])
+                            .map_err(|e| RecoveryError::Write {
+                                path: file.path().to_owned(),
+                                source: e,
+                            })?;
                         map.mark(pos, n as u64, Status::Finished);
+                        map.current_status = Status::Finished;
                         pos += n as u64;
                         rescued = true;
                         break;
                     }
-                    Ok(_) => { last_err = "empty read".into(); }
-                    Err(e) => { last_err = e.to_string(); }
+                    Ok(_) => {
+                        last_err = "empty read".into();
+                    }
+                    Err(e) => {
+                        last_err = e.to_string();
+                    }
                 }
             }
 
             if !rescued {
                 // Pre-alloc already zeroed this region; mark as bad.
                 map.mark(pos, len as u64, Status::BadSector);
+                map.current_status = Status::BadSector;
                 emit_audit(job, || AuditEvent::RecoveryReadError {
                     ts: OffsetDateTime::now_utc(),
                     offset: pos,
@@ -346,12 +354,12 @@ fn emit_audit(job: &AcquireJob, make_event: impl FnOnce() -> AuditEvent) {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, atomic::AtomicBool};
-    use std::collections::HashMap;
+    use super::*;
     use iridium_acquire::AcquireJob;
     use iridium_core::HashAlg;
     use iridium_device::Disk;
-    use super::*;
+    use std::collections::HashMap;
+    use std::sync::{Arc, atomic::AtomicBool};
 
     // ── MockReader ───────────────────────────────────────────────────────────
 
@@ -367,7 +375,12 @@ mod tests {
 
     impl MockReader {
         fn new(data: Vec<u8>) -> Self {
-            Self { data, error_offsets: HashMap::new(), hit_counts: HashMap::new(), clear_after: u32::MAX }
+            Self {
+                data,
+                error_offsets: HashMap::new(),
+                hit_counts: HashMap::new(),
+                clear_after: u32::MAX,
+            }
         }
 
         fn with_permanent_error(mut self, offset: u64) -> Self {
@@ -412,14 +425,21 @@ mod tests {
 
     fn make_job_and_dir() -> (AcquireJob, tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::tempdir().unwrap();
-        let src  = dir.path().join("src.img");
+        let src = dir.path().join("src.img");
         std::fs::write(&src, vec![0u8; 512]).unwrap();
         let disk = Disk {
             path: src.clone(),
-            model: String::new(), serial: String::new(),
-            size_bytes: 512, logical_sector_size: 512, sector_size: 512,
-            hpa_size_bytes: None, dco_restricted: false,
-            removable: false, rotational: false, read_only: true, partition_of: None,
+            model: String::new(),
+            serial: String::new(),
+            size_bytes: 512,
+            logical_sector_size: 512,
+            sector_size: 512,
+            hpa_size_bytes: None,
+            dco_restricted: false,
+            removable: false,
+            rotational: false,
+            read_only: true,
+            partition_of: None,
         };
         let dest = dir.path().join("output");
         let job = AcquireJob::new(disk, dest.clone(), vec![HashAlg::Sha256]);
@@ -435,11 +455,15 @@ mod tests {
         }
     }
 
-    fn make_map_and_file(total: u64, dir: &std::path::Path, name: &str) -> (MapState, RecoveryFile) {
-        let img   = dir.join(format!("{name}.img"));
+    fn make_map_and_file(
+        total: u64,
+        dir: &std::path::Path,
+        name: &str,
+    ) -> (MapState, RecoveryFile) {
+        let img = dir.join(format!("{name}.img"));
         let mpath = dir.join(format!("{name}.map"));
-        let map   = MapState::new(total, mpath, "0.1.0".into(), vec![]);
-        let file  = RecoveryFile::create(&img, total).unwrap();
+        let map = MapState::new(total, mpath, "0.1.0".into(), vec![]);
+        let file = RecoveryFile::create(&img, total).unwrap();
         (map, file)
     }
 
@@ -494,10 +518,12 @@ mod tests {
         // 4 sectors of 128 bytes each; sector 1 and 2 are bad
         let mut data = vec![0u8; 512];
         // Poison all data so we can check what was written.
-        for (i, b) in data.iter_mut().enumerate() { *b = i as u8; }
+        for (i, b) in data.iter_mut().enumerate() {
+            *b = i as u8;
+        }
 
         let mut reader = MockReader::new(data.clone())
-            .with_permanent_error(128)  // sector 1
+            .with_permanent_error(128) // sector 1
             .with_permanent_error(256); // sector 2
 
         let (mut map, file) = make_map_and_file(512, dir.path(), "trim");
@@ -506,7 +532,7 @@ mod tests {
         // Simulate forward pass having already marked the bad region.
         // Forward pass with chunk=512 would mark all as NonTrimmed (error at 0).
         // Instead manually set up: [0..128]=Finished, [128..384]=NonTrimmed, [384..512]=Finished.
-        map.mark(0,   128, Status::Finished);
+        map.mark(0, 128, Status::Finished);
         map.mark(128, 256, Status::NonTrimmed);
         map.mark(384, 128, Status::Finished);
 

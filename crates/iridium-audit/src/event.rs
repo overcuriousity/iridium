@@ -87,7 +87,6 @@ pub enum AuditEvent {
     },
 
     // ── Recovery-mode events (Phase 6) ────────────────────────────────────────
-
     /// Emitted once at the start of a recovery run.
     RecoveryStarted {
         #[serde(with = "time::serde::rfc3339")]
@@ -125,8 +124,15 @@ pub enum AuditEvent {
         finished_bytes: u64,
         bad_bytes: u64,
     },
-    /// Emitted after the hash pass completes (or immediately before sealing
-    /// when the run was cancelled before hashing).
+    /// Emitted when the recovery pipeline is stopped by the cancel flag.
+    RecoveryCancelled {
+        #[serde(with = "time::serde::rfc3339")]
+        ts: OffsetDateTime,
+        total_bytes: u64,
+        finished_bytes: u64,
+        bad_bytes: u64,
+    },
+    /// Emitted after the hash pass completes successfully.
     RecoveryCompleted {
         #[serde(with = "time::serde::rfc3339")]
         ts: OffsetDateTime,

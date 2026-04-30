@@ -132,10 +132,10 @@ pub fn run_recovery(
 
     job.format = Some(ImageFormat::Raw);
 
-    let total_bytes    = job.source.size_bytes;
-    let sector_size    = job.source.logical_sector_size as usize;
-    let output_path    = job.dest_path.with_extension("img");
-    let mapfile_path   = opts
+    let total_bytes = job.source.size_bytes;
+    let sector_size = job.source.logical_sector_size as usize;
+    let output_path = job.dest_path.with_extension("img");
+    let mapfile_path = opts
         .mapfile_path
         .clone()
         .unwrap_or_else(|| job.dest_path.with_extension("map"));
@@ -183,18 +183,23 @@ pub fn run_recovery(
     let ok = passes::forward_pass(&mut reader, &mut map, &recovery_file, &job, &opts)?;
     flush_map(&mut map, &job, &opts)?;
     if !ok {
-        return cancelled_result(map, mapfile_path);
+        return cancelled_result(&job, map, mapfile_path);
     }
 
     // ── Pass 2: trim ──────────────────────────────────────────────────────────
     if map.has_status(map::Status::NonTrimmed) {
         start_pass(&job, &mut map, "trim", 2);
         let ok = passes::trim_pass(
-            &mut reader, &mut map, &recovery_file, &job, &opts, sector_size,
+            &mut reader,
+            &mut map,
+            &recovery_file,
+            &job,
+            &opts,
+            sector_size,
         )?;
         flush_map(&mut map, &job, &opts)?;
         if !ok {
-            return cancelled_result(map, mapfile_path);
+            return cancelled_result(&job, map, mapfile_path);
         }
     }
 
@@ -202,18 +207,23 @@ pub fn run_recovery(
     if map.has_status(map::Status::NonScraped) {
         start_pass(&job, &mut map, "scrape", 3);
         let ok = passes::scrape_pass(
-            &mut reader, &mut map, &recovery_file, &job, &opts, sector_size,
+            &mut reader,
+            &mut map,
+            &recovery_file,
+            &job,
+            &opts,
+            sector_size,
         )?;
         flush_map(&mut map, &job, &opts)?;
         if !ok {
-            return cancelled_result(map, mapfile_path);
+            return cancelled_result(&job, map, mapfile_path);
         }
     }
 
     // ── Pass 4: hash ──────────────────────────────────────────────────────────
     start_pass(&job, &mut map, "hash", 4);
-    let digests = hash_pass::hash_pass(&output_path, &job.algorithms)
-        .map_err(RecoveryError::Hash)?;
+    let digests =
+        hash_pass::hash_pass(&output_path, &job.algorithms).map_err(RecoveryError::Hash)?;
 
     // Final mapfile flush.
     flush_map(&mut map, &job, &opts)?;
@@ -226,7 +236,10 @@ pub fn run_recovery(
         bad_bytes: map.bad_bytes(),
         digests: digests
             .iter()
-            .map(|d| DigestRecord { algorithm: d.algorithm, hex: d.hex.clone() })
+            .map(|d| DigestRecord {
+                algorithm: d.algorithm,
+                hex: d.hex.clone(),
+            })
             .collect(),
     });
 
@@ -249,7 +262,9 @@ fn start_pass(job: &AcquireJob, map: &mut map::MapState, pass: &str, pass_num: u
         pass: pass.to_owned(),
     });
     if let Some(tx) = &job.progress_tx {
-        let _ = tx.try_send(ProgressEvent::RecoveryPassStarted { pass: pass.to_owned() });
+        let _ = tx.try_send(ProgressEvent::RecoveryPassStarted {
+            pass: pass.to_owned(),
+        });
     }
 }
 
@@ -272,9 +287,16 @@ fn flush_map(
 }
 
 fn cancelled_result(
+    job: &AcquireJob,
     map: map::MapState,
     mapfile_path: PathBuf,
 ) -> Result<RecoveryResult, RecoveryError> {
+    emit_audit(job, || AuditEvent::RecoveryCancelled {
+        ts: OffsetDateTime::now_utc(),
+        total_bytes: map.total_bytes,
+        finished_bytes: map.finished_bytes(),
+        bad_bytes: map.bad_bytes(),
+    });
     Ok(RecoveryResult {
         digests: vec![],
         total_bytes: map.total_bytes,
@@ -425,7 +447,10 @@ mod tests {
         let content = std::fs::read_to_string(&mapfile).unwrap();
 
         // Must have the header comment
-        assert!(content.contains("iridium-recovery"), "mapfile missing header");
+        assert!(
+            content.contains("iridium-recovery"),
+            "mapfile missing header"
+        );
 
         // All regions should be '+' (finished) for a healthy source.
         let data_lines: Vec<&str> = content
@@ -497,7 +522,9 @@ mod tests {
 
         let events: Vec<_> = rx.try_iter().collect();
         assert!(
-            events.iter().any(|e| matches!(e, ProgressEvent::RecoveryPassStarted { .. })),
+            events
+                .iter()
+                .any(|e| matches!(e, ProgressEvent::RecoveryPassStarted { .. })),
             "must have at least one RecoveryPassStarted event"
         );
     }

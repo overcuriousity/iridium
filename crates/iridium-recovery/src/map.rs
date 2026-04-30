@@ -1,8 +1,7 @@
 // map.rs — GNU ddrescue-compatible mapfile state and atomic serialiser.
 
 use std::{
-    fmt,
-    fs,
+    fmt, fs,
     io::{self, Write as _},
     path::{Path, PathBuf},
 };
@@ -29,22 +28,22 @@ pub enum Status {
 impl Status {
     pub fn as_char(self) -> char {
         match self {
-            Status::NonTried   => '?',
+            Status::NonTried => '?',
             Status::NonTrimmed => '*',
             Status::NonScraped => '/',
-            Status::BadSector  => '-',
-            Status::Finished   => '+',
+            Status::BadSector => '-',
+            Status::Finished => '+',
         }
     }
 
     /// Human-readable name used in audit log `map_status` fields.
     pub fn as_str(self) -> &'static str {
         match self {
-            Status::NonTried   => "?",
+            Status::NonTried => "?",
             Status::NonTrimmed => "*",
             Status::NonScraped => "/",
-            Status::BadSector  => "-",
-            Status::Finished   => "+",
+            Status::BadSector => "-",
+            Status::Finished => "+",
         }
     }
 }
@@ -98,7 +97,11 @@ impl MapState {
         argv: Vec<String>,
     ) -> Self {
         Self {
-            regions: vec![Region { pos: 0, size: total_bytes, status: Status::NonTried }],
+            regions: vec![Region {
+                pos: 0,
+                size: total_bytes,
+                status: Status::NonTried,
+            }],
             total_bytes,
             current_pos: 0,
             current_status: Status::NonTried,
@@ -113,14 +116,16 @@ impl MapState {
     // ── Query helpers ─────────────────────────────────────────────────────────
 
     pub fn finished_bytes(&self) -> u64 {
-        self.regions.iter()
+        self.regions
+            .iter()
             .filter(|r| r.status == Status::Finished)
             .map(|r| r.size)
             .sum()
     }
 
     pub fn bad_bytes(&self) -> u64 {
-        self.regions.iter()
+        self.regions
+            .iter()
             .filter(|r| r.status == Status::BadSector)
             .map(|r| r.size)
             .sum()
@@ -157,7 +162,9 @@ impl MapState {
 
     // ── Mapfile I/O ───────────────────────────────────────────────────────────
 
-    /// Write the mapfile atomically: serialise to `<path>.tmp` then rename.
+    /// Write the mapfile atomically: serialise to `<path>.tmp`, fsync, rename,
+    /// then fsync the parent directory to make the rename durable across a
+    /// power loss.
     pub fn flush(&self) -> io::Result<()> {
         let tmp = tmp_path(&self.mapfile_path);
         {
@@ -166,7 +173,14 @@ impl MapState {
             f.flush()?;
             f.sync_data()?;
         }
-        fs::rename(&tmp, &self.mapfile_path)
+        fs::rename(&tmp, &self.mapfile_path)?;
+        // Syncing the directory entry makes the rename visible after a crash.
+        if let Some(parent) = self.mapfile_path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::File::open(parent)?.sync_all()?;
+        }
+        Ok(())
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -176,8 +190,16 @@ impl MapState {
             let r = &self.regions[i];
             if r.pos < at && r.end() > at {
                 let status = r.status;
-                let left  = Region { pos: r.pos, size: at - r.pos,    status };
-                let right = Region { pos: at,    size: r.end() - at,  status };
+                let left = Region {
+                    pos: r.pos,
+                    size: at - r.pos,
+                    status,
+                };
+                let right = Region {
+                    pos: at,
+                    size: r.end() - at,
+                    status,
+                };
                 self.regions.splice(i..=i, [left, right]);
                 return;
             }
@@ -213,10 +235,18 @@ fn write_mapfile(w: &mut impl io::Write, m: &MapState) -> io::Result<()> {
             .map_err(|e| io::Error::other(e.to_string()))
     };
 
-    writeln!(w, "# Mapfile. Created by iridium-recovery v{}", m.iridium_version)?;
+    writeln!(
+        w,
+        "# Mapfile. Created by iridium-recovery v{}",
+        m.iridium_version
+    )?;
     writeln!(w, "# Command line: {}", m.argv.join(" "))?;
     writeln!(w, "# Start time:   {}", format_ts(m.start_time)?)?;
-    writeln!(w, "# Current time: {}", format_ts(OffsetDateTime::now_utc())?)?;
+    writeln!(
+        w,
+        "# Current time: {}",
+        format_ts(OffsetDateTime::now_utc())?
+    )?;
     writeln!(w, "# current_pos  current_status  current_pass")?;
     writeln!(
         w,
@@ -237,7 +267,12 @@ mod tests {
     use super::*;
 
     fn make_map(total: u64) -> MapState {
-        MapState::new(total, PathBuf::from("/tmp/test.map"), "0.1.0".into(), vec![])
+        MapState::new(
+            total,
+            PathBuf::from("/tmp/test.map"),
+            "0.1.0".into(),
+            vec![],
+        )
     }
 
     // ── mark / split / merge ─────────────────────────────────────────────────
@@ -246,14 +281,28 @@ mod tests {
     fn initial_state_is_single_non_tried_region() {
         let m = make_map(1024);
         assert_eq!(m.regions.len(), 1);
-        assert_eq!(m.regions[0], Region { pos: 0, size: 1024, status: Status::NonTried });
+        assert_eq!(
+            m.regions[0],
+            Region {
+                pos: 0,
+                size: 1024,
+                status: Status::NonTried
+            }
+        );
     }
 
     #[test]
     fn mark_full_range_replaces_single_region() {
         let mut m = make_map(512);
         m.mark(0, 512, Status::Finished);
-        assert_eq!(m.regions, vec![Region { pos: 0, size: 512, status: Status::Finished }]);
+        assert_eq!(
+            m.regions,
+            vec![Region {
+                pos: 0,
+                size: 512,
+                status: Status::Finished
+            }]
+        );
     }
 
     #[test]
@@ -261,8 +310,22 @@ mod tests {
         let mut m = make_map(1024);
         m.mark(0, 512, Status::Finished);
         assert_eq!(m.regions.len(), 2);
-        assert_eq!(m.regions[0], Region { pos: 0,   size: 512, status: Status::Finished });
-        assert_eq!(m.regions[1], Region { pos: 512, size: 512, status: Status::NonTried });
+        assert_eq!(
+            m.regions[0],
+            Region {
+                pos: 0,
+                size: 512,
+                status: Status::Finished
+            }
+        );
+        assert_eq!(
+            m.regions[1],
+            Region {
+                pos: 512,
+                size: 512,
+                status: Status::NonTried
+            }
+        );
     }
 
     #[test]
@@ -278,9 +341,16 @@ mod tests {
     #[test]
     fn mark_adjacent_same_status_merges() {
         let mut m = make_map(1024);
-        m.mark(0,   512, Status::Finished);
+        m.mark(0, 512, Status::Finished);
         m.mark(512, 512, Status::Finished);
-        assert_eq!(m.regions, vec![Region { pos: 0, size: 1024, status: Status::Finished }]);
+        assert_eq!(
+            m.regions,
+            vec![Region {
+                pos: 0,
+                size: 1024,
+                status: Status::Finished
+            }]
+        );
     }
 
     #[test]
@@ -294,7 +364,7 @@ mod tests {
     #[test]
     fn finished_bytes_and_bad_bytes_are_accurate() {
         let mut m = make_map(1024);
-        m.mark(0,   256, Status::Finished);
+        m.mark(0, 256, Status::Finished);
         m.mark(256, 256, Status::BadSector);
         // remaining 512 bytes are NonTried
         assert_eq!(m.finished_bytes(), 256);
@@ -317,7 +387,7 @@ mod tests {
             .skip(1) // skip current_pos line
             .map(|l| {
                 let parts: Vec<&str> = l.split_whitespace().collect();
-                let pos  = u64::from_str_radix(parts[0].trim_start_matches("0x"), 16).unwrap();
+                let pos = u64::from_str_radix(parts[0].trim_start_matches("0x"), 16).unwrap();
                 let size = u64::from_str_radix(parts[1].trim_start_matches("0x"), 16).unwrap();
                 let status = parts[2].chars().next().unwrap();
                 (pos, size, status)
@@ -345,7 +415,14 @@ mod tests {
         write_mapfile(&mut buf, &m).unwrap();
         let s = String::from_utf8(buf).unwrap();
         let rows = parse_data_lines(&s);
-        assert_eq!(rows, vec![(0x000, 0x100, '+'), (0x100, 0x100, '-'), (0x200, 0x200, '?')]);
+        assert_eq!(
+            rows,
+            vec![
+                (0x000, 0x100, '+'),
+                (0x100, 0x100, '-'),
+                (0x200, 0x200, '?')
+            ]
+        );
     }
 
     #[test]
