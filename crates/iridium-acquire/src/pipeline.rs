@@ -14,9 +14,10 @@ pub(crate) fn run(
     job: &AcquireJob,
     mut writer: Box<dyn ImageWriter>,
 ) -> Result<AcquireResult, AcquireError> {
-    // `validate_job` already runs in the public entry points before the
-    // output file is created. This is the second line of defence for direct
-    // callers of `run_with_writer`, which accept a pre-built writer.
+    // Validate unconditionally in the pipeline.
+    // Some public entry points also validate earlier so invalid jobs can be
+    // rejected before creating the output, but callers that reach this
+    // function are still checked here.
     crate::validate_job(job)?;
 
     let mut reader = job

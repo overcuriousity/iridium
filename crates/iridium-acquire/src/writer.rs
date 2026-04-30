@@ -187,9 +187,13 @@ impl EwfWriter {
         for entry in entries.flatten() {
             let p = entry.path();
             if p.file_stem() == Some(stem)
-                && p.extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| e.starts_with('E') || e.starts_with('e'))
+                && p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                    let b = e.as_bytes();
+                    b.len() == 3
+                        && (b[0] == b'E' || b[0] == b'e')
+                        && b[1].is_ascii_digit()
+                        && b[2].is_ascii_digit()
+                })
                 && let Err(e) = std::fs::remove_file(&p)
             {
                 log::warn!(
