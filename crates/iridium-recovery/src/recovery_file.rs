@@ -61,6 +61,8 @@ impl RecoveryFile {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::FileExt as _;
+
     use super::*;
 
     #[test]

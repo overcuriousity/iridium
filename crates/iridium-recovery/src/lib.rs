@@ -131,6 +131,8 @@ pub fn run_recovery(
     }
 
     job.format = Some(ImageFormat::Raw);
+    // Keep job.chunk_size in sync so audit metadata matches the actual run.
+    job.chunk_size = opts.chunk_size;
 
     let total_bytes = job.source.size_bytes;
     let sector_size = job.source.logical_sector_size as usize;
@@ -142,6 +144,17 @@ pub fn run_recovery(
     let argv: Vec<String> = std::env::args_os()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
+
+    // ── Open device reader first ──────────────────────────────────────────────
+    // Opening the reader before creating output artefacts prevents a failed
+    // device open from leaving a truncated image and a misleading audit event.
+    let mut reader = job
+        .source
+        .open_read_only()
+        .map_err(|e| RecoveryError::DeviceOpen {
+            path: job.source.path.clone(),
+            source: e,
+        })?;
 
     // ── Create output file ────────────────────────────────────────────────────
     let recovery_file =
@@ -168,15 +181,6 @@ pub fn run_recovery(
         job: job_metadata(&job),
         mapfile_path: mapfile_path.clone(),
     });
-
-    // ── Open device reader ────────────────────────────────────────────────────
-    let mut reader = job
-        .source
-        .open_read_only()
-        .map_err(|e| RecoveryError::DeviceOpen {
-            path: job.source.path.clone(),
-            source: e,
-        })?;
 
     // ── Pass 1: forward ───────────────────────────────────────────────────────
     start_pass(&job, &mut map, "forward", 1);

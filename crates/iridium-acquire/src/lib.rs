@@ -70,6 +70,7 @@ impl AcquireJob {
 
 /// Events emitted by the pipeline via [`AcquireJob::progress_tx`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ProgressEvent {
     /// Emitted once before the first read.
     Started { total_bytes: u64 },

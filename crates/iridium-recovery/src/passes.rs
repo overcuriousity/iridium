@@ -201,6 +201,17 @@ pub fn trim_pass(
                         })?;
                     map.mark(read_start, n as u64, Status::Finished);
                     map.current_status = Status::Finished;
+                    if n < read_len {
+                        // Short read: explicitly downgrade the unread tail
+                        // [read_start+n, bwd) to NonScraped before breaking,
+                        // so those bytes are not left stranded as NonTrimmed.
+                        let tail = read_start + n as u64;
+                        if tail < bwd {
+                            map.mark(tail, bwd - tail, Status::NonScraped);
+                        }
+                        bwd = read_start;
+                        break;
+                    }
                     bwd = read_start;
                 }
                 _ => break,

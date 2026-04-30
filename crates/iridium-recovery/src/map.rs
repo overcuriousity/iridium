@@ -152,10 +152,18 @@ impl MapState {
         let end = pos + size;
         self.split_at(pos);
         self.split_at(end);
-        for r in self.regions.iter_mut() {
-            if r.pos >= pos && r.end() <= end {
-                r.status = status;
-            }
+        // Regions are kept sorted by pos; binary-search to avoid an O(n) scan
+        // on every mark call (which would be O(n²) over a full recovery run).
+        let start_idx = self
+            .regions
+            .binary_search_by(|r| r.pos.cmp(&pos))
+            .unwrap_or_else(|i| i);
+        let end_idx = self
+            .regions
+            .binary_search_by(|r| r.pos.cmp(&end))
+            .unwrap_or_else(|i| i);
+        for r in &mut self.regions[start_idx..end_idx] {
+            r.status = status;
         }
         self.merge_adjacent();
     }

@@ -87,14 +87,19 @@ without requiring a real device, sysfs, or `O_DIRECT` support.
 
 ### Audit events
 
-Five new `AuditEvent` variants are added to `iridium-audit` (non-breaking
-because the enum uses `#[serde(tag)]`):
+Six new `AuditEvent` variants are added to `iridium-audit`:
 
 - `RecoveryStarted` — analogous to `Start`; captures job metadata and mapfile path.
 - `RecoveryPassStarted` — emitted at the beginning of each pass.
-- `RecoveryReadError` — emitted per bad sector (carries ddrescue status char).
+- `RecoveryReadError` — emitted per failing read region (carries ddrescue status char).
 - `MapfileFlushed` — emitted after each atomic mapfile rewrite.
+- `RecoveryCancelled` — emitted when a run is stopped by the cancel flag.
 - `RecoveryCompleted` — carries final digests, finished and bad byte counts.
+
+Note: adding variants to a public Rust enum is a source-level breaking change
+for downstream exhaustive `match` expressions regardless of `#[serde(tag)]`
+(which only governs the JSON representation).  `ProgressEvent` is marked
+`#[non_exhaustive]` to prevent this for future additions.
 
 ## Consequences
 
