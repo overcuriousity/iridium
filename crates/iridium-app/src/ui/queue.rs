@@ -10,9 +10,12 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
 
     // Active job
     if let Some(active) = &state.active {
-        ui.group(|ui| {
-            progress::show_active(ui, active);
-        });
+        let cancelled = ui.group(|ui| progress::show_active(ui, active)).inner;
+        if cancelled {
+            // Wake the event loop immediately so poll_progress picks up the
+            // Cancelled event within the same frame rather than after 100 ms.
+            ui.ctx().request_repaint();
+        }
         ui.separator();
     }
 
@@ -36,17 +39,18 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         ui.separator();
     }
 
-    // Completed jobs
+    // Completed jobs — always expanded so cancelled/failed results are visible immediately
     if !state.completed.is_empty() {
-        ui.collapsing("Completed", |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("completed_scroll")
-                .max_height(300.0)
-                .show(ui, |ui| {
-                    for job in state.completed.iter().rev() {
-                        progress::show_completed(ui, job);
-                    }
-                });
-        });
+        ui.separator();
+        ui.heading(format!("Completed ({})", state.completed.len()));
+        egui::ScrollArea::vertical()
+            .id_salt("completed_scroll")
+            .max_height(300.0)
+            .show(ui, |ui| {
+                for job in state.completed.iter().rev() {
+                    progress::show_completed(ui, job);
+                    ui.separator();
+                }
+            });
     }
 }

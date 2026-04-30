@@ -167,6 +167,11 @@ impl AppState {
                 _ => {}
             }
         }
+        // Refresh the audit tail on every poll so the dock stays live.
+        if let Some(path) = &self.audit_path {
+            self.audit_lines = tail_file(path, 200);
+        }
+
         finished
     }
 

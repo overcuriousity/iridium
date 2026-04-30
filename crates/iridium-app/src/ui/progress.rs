@@ -3,7 +3,8 @@ use egui::Ui;
 use crate::state::{ActiveJob, CompletedJob, JobOutcome};
 
 /// Shows the active job's live progress.
-pub fn show_active(ui: &mut Ui, active: &ActiveJob) {
+/// Returns `true` if the Cancel button was clicked this frame.
+pub fn show_active(ui: &mut Ui, active: &ActiveJob) -> bool {
     ui.heading("Active job");
     ui.label(format!("Source: {}", active.spec.source.path.display()));
     ui.label(format!("Output: {}", active.spec.dest_path.display()));
@@ -54,11 +55,11 @@ pub fn show_active(ui: &mut Ui, active: &ActiveJob) {
         );
     }
 
-    if ui.button("Cancel").clicked() {
-        active
-            .cancel
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+    let cancelled = ui.button("Cancel").clicked();
+    if cancelled {
+        active.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
     }
+    cancelled
 }
 
 /// Shows a single completed job entry.

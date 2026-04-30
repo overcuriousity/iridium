@@ -31,6 +31,9 @@ pub fn start_next(state: &mut AppState, egui_ctx: &egui::Context) {
 
     let handle = std::thread::spawn(move || run_job(worker_spec, worker_cancel, progress_tx, ctx));
 
+    // Point the audit dock at the log file this job will write.
+    state.audit_path = Some(spec.dest_path.with_extension("jsonl"));
+
     state.active = Some(ActiveJob {
         spec,
         cancel,
