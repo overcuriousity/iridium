@@ -5,5 +5,4 @@
 mod tests {
     #[test]
     fn smoke() {}
-
 }

@@ -80,14 +80,15 @@ impl Log {
     pub fn append(&self, event: &AuditEvent) -> Result<(), AuditError> {
         let line = serde_json::to_string(event).map_err(|e| AuditError::Encode { source: e })?;
 
+        // Append the newline before locking so the write is a single syscall.
+        // This prevents another writer from interleaving between the JSON bytes
+        // and the newline when multiple processes share one log file.
+        let mut line = line;
+        line.push('\n');
+
         let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
 
         file.write_all(line.as_bytes())
-            .map_err(|e| AuditError::Write {
-                path: self.path.clone(),
-                source: e,
-            })?;
-        file.write_all(b"\n")
             .map_err(|e| AuditError::Write {
                 path: self.path.clone(),
                 source: e,
@@ -186,7 +187,11 @@ mod tests {
 
         let content = std::fs::read_to_string(&path).unwrap();
         let lines: Vec<&str> = content.lines().filter(|l| !l.is_empty()).collect();
-        assert_eq!(lines.len(), 2, "must have exactly 2 lines (cancelled + sealed)");
+        assert_eq!(
+            lines.len(),
+            2,
+            "must have exactly 2 lines (cancelled + sealed)"
+        );
 
         let last: AuditEvent = serde_json::from_str(lines.last().unwrap()).unwrap();
         assert!(

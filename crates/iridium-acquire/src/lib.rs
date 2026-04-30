@@ -37,8 +37,11 @@ pub struct AcquireJob {
     /// delivered without drops.
     pub progress_tx: Option<crossbeam_channel::Sender<ProgressEvent>>,
     /// Optional audit log.  When set, the pipeline appends `Start`, `ReadError`,
-    /// `Cancelled`, and `Completed` events.  `Log::seal` must be called by the
-    /// caller when the acquisition session ends.
+    /// `Cancelled`, and `Completed` events.  The caller is responsible for
+    /// sealing the log when the session ends. Because this field wraps the log
+    /// in an [`Arc`], [`iridium_audit::Log::seal`] (which consumes `self`)
+    /// cannot be called directly; the caller must first regain sole ownership
+    /// via [`Arc::try_unwrap`] after all other clones have been dropped.
     pub audit: Option<Arc<iridium_audit::Log>>,
     /// Output format; used only for audit metadata.  Set automatically by the
     /// [`run`] and [`run_ewf`] convenience entry points; `None` when using
@@ -311,6 +314,81 @@ mod tests {
             run_with_writer(job, writer),
             Err(AcquireError::NoAlgorithms)
         ));
+    }
+
+    #[test]
+    fn audit_log_receives_start_and_completed_events() {
+        use std::sync::Arc;
+
+        let data = b"audit wiring test payload";
+        let (mut job, dir) = make_job(data, vec![HashAlg::Sha256]);
+
+        let log_path = dir.path().join("audit.jsonl");
+        let audit_log = Arc::new(iridium_audit::Log::open(&log_path).unwrap());
+        job.audit = Some(Arc::clone(&audit_log));
+
+        let writer = Box::new(MemWriter(Vec::new()));
+        let result = run_with_writer(job, writer).unwrap();
+        assert!(result.complete);
+
+        Arc::try_unwrap(audit_log).ok().unwrap().seal().unwrap();
+
+        let events: Vec<serde_json::Value> = std::fs::read_to_string(&log_path)
+            .unwrap()
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+
+        assert!(
+            events.iter().any(|e| e["event"] == "start"),
+            "must have a start event; got: {events:?}"
+        );
+        assert!(
+            events.iter().any(|e| e["event"] == "completed"),
+            "must have a completed event; got: {events:?}"
+        );
+        assert_eq!(
+            events.last().unwrap()["event"],
+            "sealed",
+            "last event must be sealed"
+        );
+    }
+
+    #[test]
+    fn audit_log_receives_cancelled_event() {
+        use std::sync::Arc;
+        use std::sync::atomic::Ordering;
+
+        let data = b"cancel audit test";
+        let (mut job, dir) = make_job(data, vec![HashAlg::Md5]);
+
+        let log_path = dir.path().join("cancel_audit.jsonl");
+        let audit_log = Arc::new(iridium_audit::Log::open(&log_path).unwrap());
+        job.audit = Some(Arc::clone(&audit_log));
+        job.cancel.store(true, Ordering::Relaxed);
+
+        let writer = Box::new(MemWriter(Vec::new()));
+        let result = run_with_writer(job, writer).unwrap();
+        assert!(!result.complete);
+
+        Arc::try_unwrap(audit_log).ok().unwrap().seal().unwrap();
+
+        let events: Vec<serde_json::Value> = std::fs::read_to_string(&log_path)
+            .unwrap()
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+
+        assert!(
+            events.iter().any(|e| e["event"] == "start"),
+            "must have a start event; got: {events:?}"
+        );
+        assert!(
+            events.iter().any(|e| e["event"] == "cancelled"),
+            "must have a cancelled event; got: {events:?}"
+        );
     }
 
     #[test]

@@ -285,11 +285,11 @@ pub fn libewf_version() -> &'static str {
     // C string literal that is valid for the entire process lifetime.
     let ptr = unsafe { libewf_get_version() };
     if ptr.is_null() {
-        return "";
+        return "unknown";
     }
     unsafe { std::ffi::CStr::from_ptr(ptr) }
         .to_str()
-        .unwrap_or("")
+        .unwrap_or("unknown")
 }
 
 #[cfg(test)]

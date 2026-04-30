@@ -30,16 +30,13 @@ pub(crate) fn run(
             source: e,
         })?;
 
-    emit_audit(
-        job,
-        AuditEvent::Start {
-            ts: OffsetDateTime::now_utc(),
-            iridium_version: env!("CARGO_PKG_VERSION").to_owned(),
-            libewf_version: iridium_ewf::libewf_version().to_owned(),
-            argv: std::env::args().collect(),
-            job: job_metadata(job),
-        },
-    );
+    emit_audit(job, || AuditEvent::Start {
+        ts: OffsetDateTime::now_utc(),
+        iridium_version: env!("CARGO_PKG_VERSION").to_owned(),
+        libewf_version: iridium_ewf::libewf_version().to_owned(),
+        argv: std::env::args().collect(),
+        job: job_metadata(job),
+    });
 
     let total_bytes = job.source.size_bytes;
     send(job, ProgressEvent::Started { total_bytes });
@@ -63,14 +60,11 @@ pub(crate) fn run(
                 complete: false,
             };
             send(job, ProgressEvent::Cancelled { bytes_done: offset });
-            emit_audit(
-                job,
-                AuditEvent::Cancelled {
-                    ts: OffsetDateTime::now_utc(),
-                    bytes_processed: offset,
-                    bad_chunks,
-                },
-            );
+            emit_audit(job, || AuditEvent::Cancelled {
+                ts: OffsetDateTime::now_utc(),
+                bytes_processed: offset,
+                bad_chunks,
+            });
             return Ok(result);
         }
 
@@ -86,8 +80,9 @@ pub(crate) fn run(
             }
             Err(e) => {
                 // Zero-fill the sector(s) covered by this chunk and continue.
+                let error_str = e.to_string();
                 log::warn!(
-                    "iridium-acquire: read error at offset {offset}: {e}; \
+                    "iridium-acquire: read error at offset {offset}: {error_str}; \
                      zero-filling chunk and continuing"
                 );
                 bad_chunks += 1;
@@ -98,16 +93,13 @@ pub(crate) fn run(
                     h.update(&buf[..fill_len]);
                 }
                 writer.write_chunk(&buf[..fill_len])?;
-                emit_audit(
-                    job,
-                    AuditEvent::ReadError {
-                        ts: OffsetDateTime::now_utc(),
-                        offset,
-                        length: fill_len as u64,
-                        error: e.to_string(),
-                        bad_chunks_total: bad_chunks,
-                    },
-                );
+                emit_audit(job, || AuditEvent::ReadError {
+                    ts: OffsetDateTime::now_utc(),
+                    offset,
+                    length: fill_len as u64,
+                    error: error_str,
+                    bad_chunks_total: bad_chunks,
+                });
                 fill_len
             }
         };
@@ -147,22 +139,19 @@ pub(crate) fn run(
         },
     );
 
-    emit_audit(
-        job,
-        AuditEvent::Completed {
-            ts: OffsetDateTime::now_utc(),
-            bytes_processed: result.bytes_processed,
-            bad_chunks: result.bad_chunks,
-            digests: result
-                .digests
-                .iter()
-                .map(|d| DigestRecord {
-                    algorithm: d.algorithm,
-                    hex: d.hex.clone(),
-                })
-                .collect(),
-        },
-    );
+    emit_audit(job, || AuditEvent::Completed {
+        ts: OffsetDateTime::now_utc(),
+        bytes_processed: result.bytes_processed,
+        bad_chunks: result.bad_chunks,
+        digests: result
+            .digests
+            .iter()
+            .map(|d| DigestRecord {
+                algorithm: d.algorithm,
+                hex: d.hex.clone(),
+            })
+            .collect(),
+    });
 
     Ok(result)
 }
@@ -176,11 +165,13 @@ fn send(job: &AcquireJob, event: ProgressEvent) {
     }
 }
 
-/// Best-effort audit event emission.  A failure to write the audit log is
-/// reported via `log::warn!` but never aborts the acquisition itself.
-fn emit_audit(job: &AcquireJob, event: AuditEvent) {
+/// Best-effort audit event emission.  The closure is only called when an
+/// audit log is present, avoiding any allocation for event construction when
+/// auditing is disabled.  Append failures are reported via `log::warn!` and
+/// never abort the acquisition.
+fn emit_audit(job: &AcquireJob, make_event: impl FnOnce() -> AuditEvent) {
     if let Some(audit_log) = &job.audit {
-        if let Err(e) = audit_log.append(&event) {
+        if let Err(e) = audit_log.append(&make_event()) {
             log::warn!("iridium-audit: failed to append audit event: {e}");
         }
     }
