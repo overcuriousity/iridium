@@ -14,8 +14,9 @@ use std::{
 use iridium_ewf_sys as sys;
 use thiserror::Error;
 
-// Re-export the libewf format/media constants so callers do not need to depend
-// on iridium-ewf-sys directly.
+// Re-export the version accessor and libewf format/media constants so callers
+// do not need to depend on iridium-ewf-sys directly.
+pub use sys::libewf_version;
 pub use sys::{
     LIBEWF_FORMAT_ENCASE1, LIBEWF_FORMAT_ENCASE2, LIBEWF_FORMAT_ENCASE3, LIBEWF_FORMAT_ENCASE4,
     LIBEWF_FORMAT_ENCASE5, LIBEWF_FORMAT_ENCASE6, LIBEWF_FORMAT_ENCASE7, LIBEWF_FORMAT_EWF,

@@ -276,6 +276,22 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
+/// Returns the libewf library version string (e.g. `"20240506"`).
+///
+/// The returned string points to a static C literal; it is valid for the
+/// lifetime of the process and never needs to be freed.
+pub fn libewf_version() -> &'static str {
+    // SAFETY: libewf_get_version returns a pointer to a static, null-terminated
+    // C string literal that is valid for the entire process lifetime.
+    let ptr = unsafe { libewf_get_version() };
+    if ptr.is_null() {
+        return "";
+    }
+    unsafe { std::ffi::CStr::from_ptr(ptr) }
+        .to_str()
+        .unwrap_or("")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -10,7 +10,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
-use iridium_core::HashAlg;
+use iridium_core::{HashAlg, ImageFormat};
 use iridium_device::Disk;
 use iridium_hash::Digest;
 
@@ -36,13 +36,21 @@ pub struct AcquireJob {
     /// unbounded channel (`crossbeam_channel::unbounded`) if you need every event
     /// delivered without drops.
     pub progress_tx: Option<crossbeam_channel::Sender<ProgressEvent>>,
+    /// Optional audit log.  When set, the pipeline appends `Start`, `ReadError`,
+    /// `Cancelled`, and `Completed` events.  `Log::seal` must be called by the
+    /// caller when the acquisition session ends.
+    pub audit: Option<Arc<iridium_audit::Log>>,
+    /// Output format; used only for audit metadata.  Set automatically by the
+    /// [`run`] and [`run_ewf`] convenience entry points; `None` when using
+    /// [`run_with_writer`] directly without setting it.
+    pub format: Option<ImageFormat>,
 }
 
 /// 1 MiB — matches Guymager's default chunk size.
 pub const DEFAULT_CHUNK_SIZE: usize = 1024 * 1024;
 
 impl AcquireJob {
-    /// Construct a job with sensible defaults (1 MiB chunks, no cancel, no progress).
+    /// Construct a job with sensible defaults (1 MiB chunks, no cancel, no progress, no audit).
     pub fn new(source: Disk, dest_path: PathBuf, algorithms: Vec<HashAlg>) -> Self {
         Self {
             source,
@@ -51,6 +59,8 @@ impl AcquireJob {
             chunk_size: DEFAULT_CHUNK_SIZE,
             cancel: Arc::new(AtomicBool::new(false)),
             progress_tx: None,
+            audit: None,
+            format: None,
         }
     }
 }
@@ -155,10 +165,11 @@ pub(crate) fn validate_job(job: &AcquireJob) -> Result<(), AcquireError> {
 /// Creates a [`RawWriter`] for `job.dest_path` and runs the
 /// read → hash → write pipeline.  To use a different output format (e.g. EWF
 /// in Phase 4), call [`run_with_writer`] directly.
-pub fn run(job: AcquireJob) -> Result<AcquireResult, AcquireError> {
+pub fn run(mut job: AcquireJob) -> Result<AcquireResult, AcquireError> {
     // Validate before creating/truncating the output file so an invalid job
     // never leaves a zero-length image on disk.
     validate_job(&job)?;
+    job.format.get_or_insert(ImageFormat::Raw);
     let writer = Box::new(RawWriter::create(&job.dest_path)?);
     pipeline::run(&job, writer)
 }
@@ -179,8 +190,9 @@ pub fn run_with_writer(
 /// Equivalent to constructing an [`EwfWriter`] and calling [`run_with_writer`].
 /// libewf appends the `.E01` extension automatically — `job.dest_path` must
 /// not include an extension.
-pub fn run_ewf(job: AcquireJob) -> Result<AcquireResult, AcquireError> {
+pub fn run_ewf(mut job: AcquireJob) -> Result<AcquireResult, AcquireError> {
     validate_job(&job)?;
+    job.format.get_or_insert(ImageFormat::Ewf);
     let writer = Box::new(EwfWriter::create(
         &job.dest_path,
         job.source.size_bytes,
