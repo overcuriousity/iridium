@@ -59,6 +59,7 @@ pub fn forward_pass(
 
     while offset < total {
         if job.cancel.load(Ordering::Relaxed) {
+            map.current_pos = offset;
             return Ok(false);
         }
 
@@ -371,12 +372,11 @@ mod tests {
 
     struct MockReader {
         data: Vec<u8>,
-        /// Offsets (in bytes) that return an I/O error on read.
-        error_offsets: HashMap<u64, bool>,
+        /// Offsets that return I/O errors; value is the clear_after threshold
+        /// (u32::MAX = permanent, N = clears after N hits).
+        error_offsets: HashMap<u64, u32>,
         /// How many times each error offset has been hit.
         hit_counts: HashMap<u64, u32>,
-        /// After this many hits the error clears (simulates a retryable error).
-        clear_after: u32,
     }
 
     impl MockReader {
@@ -385,18 +385,16 @@ mod tests {
                 data,
                 error_offsets: HashMap::new(),
                 hit_counts: HashMap::new(),
-                clear_after: u32::MAX,
             }
         }
 
         fn with_permanent_error(mut self, offset: u64) -> Self {
-            self.error_offsets.insert(offset, true);
+            self.error_offsets.insert(offset, u32::MAX);
             self
         }
 
         fn with_retryable_error(mut self, offset: u64, clear_after: u32) -> Self {
-            self.error_offsets.insert(offset, true);
-            self.clear_after = clear_after;
+            self.error_offsets.insert(offset, clear_after);
             self
         }
     }
@@ -405,10 +403,10 @@ mod tests {
         fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, io::Error> {
             // Check every sector-aligned position within the request for errors.
             // For simplicity, check the start offset against known error positions.
-            if self.error_offsets.contains_key(&offset) {
+            if let Some(&clear_after) = self.error_offsets.get(&offset) {
                 let count = self.hit_counts.entry(offset).or_insert(0);
                 *count += 1;
-                if *count <= self.clear_after {
+                if *count <= clear_after {
                     return Err(io::Error::other("mock read error"));
                 }
                 // After clear_after hits, succeed.

@@ -149,15 +149,15 @@ impl MapState {
         let end = pos
             .checked_add(size)
             .expect("MapState::mark: pos + size overflows u64");
-        debug_assert!(
+        assert!(
             end <= self.total_bytes,
             "MapState::mark: pos {pos} + size {size} = {end} exceeds total_bytes {}",
             self.total_bytes,
         );
         self.split_at(pos);
         self.split_at(end);
-        // Regions are kept sorted by pos; binary-search to avoid an O(n) scan
-        // on every mark call (which would be O(n²) over a full recovery run).
+        // Regions are kept sorted by pos; binary-search to locate the affected
+        // range boundaries rather than scanning from the start each time.
         let start_idx = self
             .regions
             .binary_search_by(|r| r.pos.cmp(&pos))
