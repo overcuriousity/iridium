@@ -40,6 +40,7 @@ pub struct JobMetadata {
 /// e.g. `{"event":"start","ts":"2026-04-30T...","job":{...}}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum AuditEvent {
     /// Emitted once, before the first device read.
     Start {

@@ -146,7 +146,7 @@ impl MapState {
         if size == 0 {
             return;
         }
-        let end = pos + size;
+        let end = pos.checked_add(size).unwrap_or(self.total_bytes);
         self.split_at(pos);
         self.split_at(end);
         // Regions are kept sorted by pos; binary-search to avoid an O(n) scan
@@ -159,11 +159,31 @@ impl MapState {
             .regions
             .binary_search_by(|r| r.pos.cmp(&end))
             .unwrap_or_else(|i| i);
+        // Update counters incrementally: subtract old contributions, add new.
+        let (old_finished, old_bad, range_size) = self.regions[start_idx..end_idx].iter().fold(
+            (0u64, 0u64, 0u64),
+            |(f, b, s), r| match r.status {
+                Status::Finished => (f + r.size, b, s + r.size),
+                Status::BadSector => (f, b + r.size, s + r.size),
+                _ => (f, b, s + r.size),
+            },
+        );
         for r in &mut self.regions[start_idx..end_idx] {
             r.status = status;
         }
         self.merge_adjacent();
-        self.refresh_counters();
+        self.finished_bytes_cache = self.finished_bytes_cache - old_finished
+            + if status == Status::Finished {
+                range_size
+            } else {
+                0
+            };
+        self.bad_bytes_cache = self.bad_bytes_cache - old_bad
+            + if status == Status::BadSector {
+                range_size
+            } else {
+                0
+            };
     }
 
     // ── Mapfile I/O ───────────────────────────────────────────────────────────
@@ -181,30 +201,17 @@ impl MapState {
         }
         fs::rename(&tmp, &self.mapfile_path)?;
         // Syncing the directory entry makes the rename visible after a crash.
-        if let Some(parent) = self.mapfile_path.parent()
-            && !parent.as_os_str().is_empty()
-        {
-            fs::File::open(parent)?.sync_all()?;
-        }
+        // Fall back to "." for bare filenames (relative paths with no explicit parent).
+        let parent = self
+            .mapfile_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        fs::File::open(parent)?.sync_all()?;
         Ok(())
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
-
-    fn refresh_counters(&mut self) {
-        self.finished_bytes_cache = self
-            .regions
-            .iter()
-            .filter(|r| r.status == Status::Finished)
-            .map(|r| r.size)
-            .sum();
-        self.bad_bytes_cache = self
-            .regions
-            .iter()
-            .filter(|r| r.status == Status::BadSector)
-            .map(|r| r.size)
-            .sum();
-    }
 
     fn split_at(&mut self, at: u64) {
         for i in 0..self.regions.len() {

@@ -351,7 +351,7 @@ pub fn scrape_pass(
 fn flush_map_and_notify(
     map: &mut MapState,
     job: &AcquireJob,
-    opts: &RecoveryOptions,
+    _opts: &RecoveryOptions,
 ) -> Result<(), RecoveryError> {
     map.flush().map_err(|e| RecoveryError::MapfileWrite {
         path: map.mapfile_path.clone(),
@@ -363,7 +363,6 @@ fn flush_map_and_notify(
         finished_bytes: map.finished_bytes(),
         bad_bytes: map.bad_bytes(),
     });
-    let _ = opts; // consumed to keep signature consistent; reserved for future opts
     Ok(())
 }
 
