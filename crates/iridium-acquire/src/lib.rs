@@ -70,6 +70,7 @@ impl AcquireJob {
 
 /// Events emitted by the pipeline via [`AcquireJob::progress_tx`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ProgressEvent {
     /// Emitted once before the first read.
     Started { total_bytes: u64 },
@@ -79,6 +80,16 @@ pub enum ProgressEvent {
     Completed { result: AcquireResult },
     /// Emitted when the pipeline is stopped by the cancel flag.
     Cancelled { bytes_done: u64 },
+    /// Emitted when a recovery pass begins.
+    ///
+    /// `pass` is one of `"forward"`, `"trim"`, `"scrape"`, or `"hash"`.
+    RecoveryPassStarted { pass: &'static str },
+    /// Emitted after each chunk during recovery passes.
+    RecoveryProgress {
+        pass: &'static str,
+        finished_bytes: u64,
+        bad_bytes: u64,
+    },
 }
 
 /// Outcome of a completed (or cancelled) acquisition.

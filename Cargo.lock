@@ -410,10 +410,17 @@ dependencies = [
 name = "iridium-recovery"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-channel",
+ "iridium-acquire",
  "iridium-audit",
  "iridium-core",
  "iridium-device",
+ "iridium-hash",
+ "log",
+ "serde_json",
+ "tempfile",
  "thiserror",
+ "time",
 ]
 
 [[package]]

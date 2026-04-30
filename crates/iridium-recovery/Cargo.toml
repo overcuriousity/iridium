@@ -8,7 +8,16 @@ repository.workspace = true
 description = "iridium — dd_rescue-style recovery mode for damaged disks"
 
 [dependencies]
-iridium-core   = { path = "../iridium-core" }
-iridium-device = { path = "../iridium-device" }
-iridium-audit  = { path = "../iridium-audit" }
+iridium-core    = { path = "../iridium-core" }
+iridium-device  = { path = "../iridium-device" }
+iridium-audit   = { path = "../iridium-audit" }
+iridium-acquire = { path = "../iridium-acquire" }
+iridium-hash    = { path = "../iridium-hash" }
 thiserror.workspace = true
+log.workspace = true
+time.workspace = true
+crossbeam-channel.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true

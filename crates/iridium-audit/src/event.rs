@@ -40,6 +40,7 @@ pub struct JobMetadata {
 /// e.g. `{"event":"start","ts":"2026-04-30T...","job":{...}}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum AuditEvent {
     /// Emitted once, before the first device read.
     Start {
@@ -84,5 +85,63 @@ pub enum AuditEvent {
     Sealed {
         #[serde(with = "time::serde::rfc3339")]
         ts: OffsetDateTime,
+    },
+
+    // ── Recovery-mode events (Phase 6) ────────────────────────────────────────
+    /// Emitted once at the start of a recovery run.
+    RecoveryStarted {
+        #[serde(with = "time::serde::rfc3339")]
+        ts: OffsetDateTime,
+        iridium_version: String,
+        argv: Vec<String>,
+        job: JobMetadata,
+        mapfile_path: std::path::PathBuf,
+    },
+    /// Emitted when a recovery pass begins.
+    ///
+    /// `pass` is one of `"forward"`, `"trim"`, `"scrape"`, or `"hash"`.
+    RecoveryPassStarted {
+        #[serde(with = "time::serde::rfc3339")]
+        ts: OffsetDateTime,
+        pass: String,
+    },
+    /// Emitted for each failing read region during recovery.
+    ///
+    /// The granularity is chunk-sized in the forward pass and sector-sized in
+    /// the scrape pass.  `map_status` is the ddrescue status character assigned
+    /// after the failure: `"*"` (non-trimmed, from the forward pass) or
+    /// `"-"` (bad-sector, from the scrape pass).
+    RecoveryReadError {
+        #[serde(with = "time::serde::rfc3339")]
+        ts: OffsetDateTime,
+        offset: u64,
+        length: u64,
+        error: String,
+        map_status: String,
+    },
+    /// Emitted after each atomic mapfile rewrite.
+    MapfileFlushed {
+        #[serde(with = "time::serde::rfc3339")]
+        ts: OffsetDateTime,
+        mapfile_path: std::path::PathBuf,
+        finished_bytes: u64,
+        bad_bytes: u64,
+    },
+    /// Emitted when the recovery pipeline is stopped by the cancel flag.
+    RecoveryCancelled {
+        #[serde(with = "time::serde::rfc3339")]
+        ts: OffsetDateTime,
+        total_bytes: u64,
+        finished_bytes: u64,
+        bad_bytes: u64,
+    },
+    /// Emitted after the hash pass completes successfully.
+    RecoveryCompleted {
+        #[serde(with = "time::serde::rfc3339")]
+        ts: OffsetDateTime,
+        total_bytes: u64,
+        finished_bytes: u64,
+        bad_bytes: u64,
+        digests: Vec<DigestRecord>,
     },
 }
