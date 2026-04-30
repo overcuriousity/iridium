@@ -14,12 +14,11 @@ pub(crate) fn run(
     job: &AcquireJob,
     mut writer: Box<dyn ImageWriter>,
 ) -> Result<AcquireResult, AcquireError> {
-    if job.algorithms.is_empty() {
-        return Err(AcquireError::NoAlgorithms);
-    }
-    if job.chunk_size == 0 {
-        return Err(AcquireError::InvalidChunkSize);
-    }
+    // Validate unconditionally in the pipeline.
+    // Some public entry points also validate earlier so invalid jobs can be
+    // rejected before creating the output, but callers that reach this
+    // function are still checked here.
+    crate::validate_job(job)?;
 
     let mut reader = job
         .source
@@ -46,7 +45,7 @@ pub(crate) fn run(
     loop {
         // Check for cancellation between chunks.
         if job.cancel.load(Ordering::Relaxed) {
-            writer.finalize()?;
+            writer.discard()?;
             let result = AcquireResult {
                 digests: vec![],
                 bytes_processed: offset,
@@ -98,9 +97,15 @@ pub(crate) fn run(
         );
     }
 
-    writer.finalize()?;
-
     let digests: Vec<_> = hashers.into_iter().map(|h| h.finish()).collect();
+
+    // Allow the writer to embed hash metadata before the file is sealed.
+    // RawWriter ignores this; EwfWriter uses it to store digest strings.
+    // Always finalize so the container is structurally valid; if both fail,
+    // the structural error takes priority.
+    let embed_result = writer.embed_digests(&digests);
+    writer.finalize()?;
+    embed_result?;
 
     let result = AcquireResult {
         digests,

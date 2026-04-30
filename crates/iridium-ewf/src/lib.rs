@@ -8,10 +8,30 @@ use std::{
     ffi::{CString, c_char},
     marker::PhantomData,
     path::Path,
+    sync::Mutex,
 };
 
 use iridium_ewf_sys as sys;
 use thiserror::Error;
+
+// Re-export the libewf format/media constants so callers do not need to depend
+// on iridium-ewf-sys directly.
+pub use sys::{
+    LIBEWF_FORMAT_ENCASE1, LIBEWF_FORMAT_ENCASE2, LIBEWF_FORMAT_ENCASE3, LIBEWF_FORMAT_ENCASE4,
+    LIBEWF_FORMAT_ENCASE5, LIBEWF_FORMAT_ENCASE6, LIBEWF_FORMAT_ENCASE7, LIBEWF_FORMAT_EWF,
+    LIBEWF_FORMAT_EWFX, LIBEWF_FORMAT_FTK_IMAGER, LIBEWF_FORMAT_LINEN5, LIBEWF_FORMAT_LINEN6,
+    LIBEWF_FORMAT_LINEN7, LIBEWF_FORMAT_SMART, LIBEWF_FORMAT_UNKNOWN, LIBEWF_FORMAT_V2_ENCASE7,
+    LIBEWF_MEDIA_FLAG_FASTBLOC, LIBEWF_MEDIA_FLAG_PHYSICAL, LIBEWF_MEDIA_FLAG_TABLEAU,
+    LIBEWF_MEDIA_TYPE_FIXED, LIBEWF_MEDIA_TYPE_MEMORY, LIBEWF_MEDIA_TYPE_OPTICAL,
+    LIBEWF_MEDIA_TYPE_REMOVABLE, LIBEWF_MEDIA_TYPE_SINGLE_FILES,
+};
+
+// ── Global serialization lock ─────────────────────────────────────────────────
+
+// libewf makes no thread-safety guarantees. This lock serializes every libewf
+// FFI call process-wide, making `unsafe impl Send for EwfHandle` sound even
+// when multiple handles exist on different threads.
+static LIBEWF_LOCK: Mutex<()> = Mutex::new(());
 
 // ── Error type ────────────────────────────────────────────────────────────────
 
@@ -27,9 +47,20 @@ pub enum EwfError {
     NullPointer,
 }
 
+// ── Lock helper ───────────────────────────────────────────────────────────────
+
+fn lock_libewf() -> std::sync::MutexGuard<'static, ()> {
+    LIBEWF_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 // ── Helper: harvest a libewf_error_t into EwfError ───────────────────────────
 
-unsafe fn harvest_error(mut raw: *mut sys::libewf_error_t) -> EwfError {
+// Accepting `_guard` proves at the call site that `LIBEWF_LOCK` is held,
+// preventing accidental calls outside a locked section.
+unsafe fn harvest_error(
+    _guard: &std::sync::MutexGuard<'static, ()>,
+    mut raw: *mut sys::libewf_error_t,
+) -> EwfError {
     if raw.is_null() {
         return EwfError::Library("(no error detail)".into());
     }
@@ -50,90 +81,117 @@ unsafe fn harvest_error(mut raw: *mut sys::libewf_error_t) -> EwfError {
 
 /// An owned libewf handle. Automatically closes and frees on drop.
 ///
-/// `EwfHandle` is `!Send + !Sync`:
-/// - `inner` (`*mut libewf_handle_t`) already makes the type `!Send + !Sync`
-///   because raw pointers opt out of both auto-traits.
-/// - `_not_send_sync` (`PhantomData<*mut ()>`) makes that intent explicit and
-///   stable even if the struct fields are ever refactored.
+/// **Thread safety:** `EwfHandle` is `Send` but `!Sync`.
 ///
-/// libewf documents no thread-safety guarantees. Callers that need
-/// cross-thread access should wrap `EwfHandle` in a `Mutex`.
+/// A handle may be moved to another thread; it must not be accessed from
+/// multiple threads simultaneously (`&mut self` access prevents this at the
+/// type level). All libewf FFI calls are serialized process-wide via an
+/// internal global lock (`LIBEWF_LOCK`), so multiple handles on different
+/// threads cannot race inside libewf even if libewf has global state. This
+/// is what makes the `Send` impl sound — the serialization invariant is
+/// enforced here, not assumed from caller behaviour.
+///
+/// `_not_send_sync` (`PhantomData<*mut ()>`) keeps the type `!Sync` and
+/// documents the intent explicitly, even if the struct fields are refactored.
 pub struct EwfHandle {
     inner: *mut sys::libewf_handle_t,
+    /// True after a successful explicit `close()` call. `Drop` checks this
+    /// flag to avoid a double-close while still freeing the handle allocation.
+    closed: bool,
     _not_send_sync: PhantomData<*mut ()>,
 }
+
+// SAFETY: Every libewf FFI call in this type is guarded by LIBEWF_LOCK, which
+// serializes all libewf access process-wide. Combined with `&mut self`
+// preventing concurrent use of a single handle, no two libewf calls can
+// execute simultaneously regardless of how many handles or threads exist.
+unsafe impl Send for EwfHandle {}
 
 impl EwfHandle {
     // ── Constructor ──────────────────────────────────────────────────────
 
     /// Allocates a new handle without opening any files.
     pub fn new() -> Result<Self, EwfError> {
+        let _g = lock_libewf();
         let mut handle: *mut sys::libewf_handle_t = std::ptr::null_mut();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
 
         let rc = unsafe { sys::libewf_handle_initialize(&mut handle, &mut error) };
         if rc != 1 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
         if handle.is_null() {
             return Err(EwfError::NullPointer);
         }
         Ok(Self {
             inner: handle,
+            closed: false,
             _not_send_sync: PhantomData,
         })
     }
 
-    // ── Metadata (call before open_write) ────────────────────────────────
+    // ── Metadata (call after open_write, before first write_buffer) ──────
+    //
+    // libewf rejects metadata setter calls until the handle has been opened,
+    // and several values (notably media size and bytes-per-sector) are baked
+    // into the segment headers as soon as the first chunk is written. Call
+    // these setters between `open_write` and the first `write_buffer`.
 
-    /// Sets the total image size in bytes. Must be called before the first write.
+    /// Sets the total image size in bytes. Must be called after `open_write`
+    /// and before the first `write_buffer`.
     pub fn set_media_size(&mut self, size: u64) -> Result<(), EwfError> {
+        let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe { sys::libewf_handle_set_media_size(self.inner, size, &mut error) };
         if rc != 1 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
         Ok(())
     }
 
-    /// Sets the media type. Use the `LIBEWF_MEDIA_TYPE_*` constants from
-    /// `iridium_ewf_sys`.
+    /// Sets the media type. Use the `LIBEWF_MEDIA_TYPE_*` constants
+    /// re-exported from `iridium_ewf`.
     pub fn set_media_type(&mut self, media_type: u8) -> Result<(), EwfError> {
+        let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe { sys::libewf_handle_set_media_type(self.inner, media_type, &mut error) };
         if rc != 1 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
         Ok(())
     }
 
-    /// Sets the media flags. Use the `LIBEWF_MEDIA_FLAG_*` constants.
+    /// Sets the media flags. Use the `LIBEWF_MEDIA_FLAG_*` constants
+    /// re-exported from `iridium_ewf`.
     pub fn set_media_flags(&mut self, flags: u8) -> Result<(), EwfError> {
+        let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe { sys::libewf_handle_set_media_flags(self.inner, flags, &mut error) };
         if rc != 1 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
         Ok(())
     }
 
-    /// Sets the output format. Use the `LIBEWF_FORMAT_*` constants.
-    /// Defaults to EnCase 6 if not called.
+    /// Sets the output format. Use the `LIBEWF_FORMAT_*` constants
+    /// re-exported from `iridium_ewf`. Defaults to EnCase 6 if not called.
     pub fn set_format(&mut self, format: u8) -> Result<(), EwfError> {
+        let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe { sys::libewf_handle_set_format(self.inner, format, &mut error) };
         if rc != 1 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
         Ok(())
     }
 
     /// Sets the bytes-per-sector value (default 512).
     pub fn set_bytes_per_sector(&mut self, bps: u32) -> Result<(), EwfError> {
+        let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe { sys::libewf_handle_set_bytes_per_sector(self.inner, bps, &mut error) };
         if rc != 1 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
         Ok(())
     }
@@ -143,6 +201,7 @@ impl EwfHandle {
     /// `identifier` is a byte-string key such as `b"case_number"` or
     /// `b"examiner_name"`.
     pub fn set_header_value(&mut self, identifier: &[u8], value: &[u8]) -> Result<(), EwfError> {
+        let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe {
             sys::libewf_handle_set_header_value(
@@ -155,16 +214,18 @@ impl EwfHandle {
             )
         };
         if rc != 1 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
         Ok(())
     }
 
     /// Stores a hash value as a UTF-8 hex string in the EWF metadata.
     ///
-    /// `identifier` is `b"MD5"` or `b"SHA1"`.
-    /// `hex_digest` is the lowercase hex string.
+    /// `identifier` is the libewf hash algorithm identifier as a byte string,
+    /// for example `b"MD5"`, `b"SHA1"`, or `b"SHA256"`.
+    /// `hex_digest` is the hexadecimal digest string for that algorithm.
     pub fn set_hash_value(&mut self, identifier: &[u8], hex_digest: &[u8]) -> Result<(), EwfError> {
+        let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe {
             sys::libewf_handle_set_hash_value(
@@ -177,30 +238,32 @@ impl EwfHandle {
             )
         };
         if rc != 1 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
         Ok(())
     }
 
     /// Embeds the raw 16-byte MD5 digest into the image.
     pub fn set_md5_hash(&mut self, digest: &[u8; 16]) -> Result<(), EwfError> {
+        let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc =
             unsafe { sys::libewf_handle_set_md5_hash(self.inner, digest.as_ptr(), 16, &mut error) };
         if rc != 1 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
         Ok(())
     }
 
     /// Embeds the raw 20-byte SHA-1 digest into the image.
     pub fn set_sha1_hash(&mut self, digest: &[u8; 20]) -> Result<(), EwfError> {
+        let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe {
             sys::libewf_handle_set_sha1_hash(self.inner, digest.as_ptr(), 20, &mut error)
         };
         if rc != 1 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
         Ok(())
     }
@@ -223,6 +286,7 @@ impl EwfHandle {
         // contents. The `*mut` cast is required to match the C signature.
         let mut ptr = c.as_ptr() as *mut c_char;
 
+        let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe {
             sys::libewf_handle_open(self.inner, &mut ptr, 1, sys::LIBEWF_OPEN_WRITE, &mut error)
@@ -230,7 +294,7 @@ impl EwfHandle {
         // `c` is dropped here after the call.
 
         if rc != 1 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
         Ok(())
     }
@@ -254,6 +318,7 @@ impl EwfHandle {
         let mut ptrs: Vec<*mut c_char> =
             cstrings.iter().map(|c| c.as_ptr() as *mut c_char).collect();
 
+        let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe {
             sys::libewf_handle_open(
@@ -265,7 +330,7 @@ impl EwfHandle {
             )
         };
         if rc != 1 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
         Ok(())
     }
@@ -275,6 +340,7 @@ impl EwfHandle {
     /// Writes a buffer at the current position.
     /// Returns the number of bytes actually written.
     pub fn write_buffer(&mut self, data: &[u8]) -> Result<usize, EwfError> {
+        let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let n = unsafe {
             sys::libewf_handle_write_buffer(
@@ -285,17 +351,18 @@ impl EwfHandle {
             )
         };
         if n < 0 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
         Ok(n as usize)
     }
 
     /// Finalises the write. Must be called after the last [`write_buffer`].
     pub fn write_finalize(&mut self) -> Result<(), EwfError> {
+        let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe { sys::libewf_handle_write_finalize(self.inner, &mut error) };
         if rc < 0 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
         Ok(())
     }
@@ -303,6 +370,7 @@ impl EwfHandle {
     /// Reads up to `buf.len()` bytes at the current position.
     /// Returns the number of bytes read (0 = EOF).
     pub fn read_buffer(&mut self, buf: &mut [u8]) -> Result<usize, EwfError> {
+        let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let n = unsafe {
             sys::libewf_handle_read_buffer(
@@ -313,24 +381,26 @@ impl EwfHandle {
             )
         };
         if n < 0 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
         Ok(n as usize)
     }
 
     /// Returns the total image size as stored in the EWF metadata.
     pub fn media_size(&mut self) -> Result<u64, EwfError> {
+        let _g = lock_libewf();
         let mut size: u64 = 0;
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe { sys::libewf_handle_get_media_size(self.inner, &mut size, &mut error) };
         if rc != 1 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
         Ok(size)
     }
 
     /// Returns the stored MD5 hash as 16 raw bytes, or `None` if not set.
     pub fn md5_hash(&mut self) -> Result<Option<[u8; 16]>, EwfError> {
+        let _g = lock_libewf();
         let mut buf = [0u8; 16];
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe {
@@ -339,7 +409,7 @@ impl EwfHandle {
         match rc {
             1 => Ok(Some(buf)),
             0 => Ok(None),
-            _ => Err(unsafe { harvest_error(error) }),
+            _ => Err(unsafe { harvest_error(&_g, error) }),
         }
     }
 
@@ -347,20 +417,21 @@ impl EwfHandle {
 
     /// Closes the underlying file(s). Also called automatically on `Drop`.
     ///
-    /// Sets `inner` to null after a successful close so that `Drop` does not
+    /// Sets `closed` to `true` after a successful close so that `Drop` does not
     /// attempt a second `libewf_handle_close`. libewf has process-global state
-    /// and a double-close corrupts it, causing subsequent handles to fail.
+    /// and a double-close corrupts it. `inner` is kept non-null so `Drop` can
+    /// still call `libewf_handle_free` to release the allocation.
     pub fn close(&mut self) -> Result<(), EwfError> {
-        if self.inner.is_null() {
+        if self.inner.is_null() || self.closed {
             return Ok(());
         }
+        let _g = lock_libewf();
         let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         let rc = unsafe { sys::libewf_handle_close(self.inner, &mut error) };
         if rc != 0 {
-            return Err(unsafe { harvest_error(error) });
+            return Err(unsafe { harvest_error(&_g, error) });
         }
-        // Null out so Drop skips the close and only frees the handle.
-        self.inner = std::ptr::null_mut();
+        self.closed = true;
         Ok(())
     }
 }
@@ -370,12 +441,16 @@ impl Drop for EwfHandle {
         if self.inner.is_null() {
             return;
         }
-        // Best-effort close; ignore errors on drop.
-        let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
-        unsafe { sys::libewf_handle_close(self.inner, &mut error) };
-        if !error.is_null() {
-            unsafe { sys::libewf_error_free(&mut error) };
+        let _g = lock_libewf();
+        if !self.closed {
+            // Best-effort close; ignore errors on drop.
+            let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
+            unsafe { sys::libewf_handle_close(self.inner, &mut error) };
+            if !error.is_null() {
+                unsafe { sys::libewf_error_free(&mut error) };
+            }
         }
+        let mut error: *mut sys::libewf_error_t = std::ptr::null_mut();
         unsafe { sys::libewf_handle_free(&mut self.inner, &mut error) };
         if !error.is_null() {
             unsafe { sys::libewf_error_free(&mut error) };

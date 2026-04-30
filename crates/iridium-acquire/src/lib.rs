@@ -3,7 +3,7 @@
 mod pipeline;
 pub mod writer;
 
-pub use writer::{ImageWriter, RawWriter};
+pub use writer::{EwfWriter, ImageWriter, RawWriter};
 
 use std::{
     path::PathBuf,
@@ -118,6 +118,34 @@ pub enum AcquireError {
         #[source]
         source: std::io::Error,
     },
+
+    #[error("failed to open EWF output {path}: {source}")]
+    EwfOpen {
+        path: PathBuf,
+        #[source]
+        source: iridium_ewf::EwfError,
+    },
+
+    #[error("EWF write failed on {path}: {source}")]
+    EwfWrite {
+        path: PathBuf,
+        #[source]
+        source: iridium_ewf::EwfError,
+    },
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Validate fields that would otherwise only fail deep inside the pipeline or
+/// after an output file has already been created.
+pub(crate) fn validate_job(job: &AcquireJob) -> Result<(), AcquireError> {
+    if job.algorithms.is_empty() {
+        return Err(AcquireError::NoAlgorithms);
+    }
+    if job.chunk_size == 0 {
+        return Err(AcquireError::InvalidChunkSize);
+    }
+    Ok(())
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -130,24 +158,34 @@ pub enum AcquireError {
 pub fn run(job: AcquireJob) -> Result<AcquireResult, AcquireError> {
     // Validate before creating/truncating the output file so an invalid job
     // never leaves a zero-length image on disk.
-    if job.algorithms.is_empty() {
-        return Err(AcquireError::NoAlgorithms);
-    }
-    if job.chunk_size == 0 {
-        return Err(AcquireError::InvalidChunkSize);
-    }
+    validate_job(&job)?;
     let writer = Box::new(RawWriter::create(&job.dest_path)?);
     pipeline::run(&job, writer)
 }
 
 /// Run an acquisition with a caller-supplied [`ImageWriter`].
 ///
-/// This is the extension point for Phase 4: pass an `EwfWriter` here to
-/// produce EWF output without changing the pipeline.
+/// Pass an [`EwfWriter`] here to produce EWF output, or any other
+/// [`ImageWriter`] implementation, without changing the pipeline.
 pub fn run_with_writer(
     job: AcquireJob,
     writer: Box<dyn ImageWriter>,
 ) -> Result<AcquireResult, AcquireError> {
+    pipeline::run(&job, writer)
+}
+
+/// Run an acquisition and write the output as an EnCase 6 EWF image (`.E01`).
+///
+/// Equivalent to constructing an [`EwfWriter`] and calling [`run_with_writer`].
+/// libewf appends the `.E01` extension automatically — `job.dest_path` must
+/// not include an extension.
+pub fn run_ewf(job: AcquireJob) -> Result<AcquireResult, AcquireError> {
+    validate_job(&job)?;
+    let writer = Box::new(EwfWriter::create(
+        &job.dest_path,
+        job.source.size_bytes,
+        job.source.logical_sector_size,
+    )?);
     pipeline::run(&job, writer)
 }
 
