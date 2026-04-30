@@ -194,7 +194,7 @@ pub fn run_recovery(
     // ── Pass 1: forward ───────────────────────────────────────────────────────
     start_pass(&job, &mut map, "forward", 1);
     let ok = passes::forward_pass(&mut reader, &mut map, &recovery_file, &job, &opts)?;
-    flush_map(&mut map, &job)?;
+    flush_map(&recovery_file, &mut map, &job)?;
     if !ok {
         return cancelled_result(&job, map, mapfile_path);
     }
@@ -210,7 +210,7 @@ pub fn run_recovery(
             &opts,
             sector_size,
         )?;
-        flush_map(&mut map, &job)?;
+        flush_map(&recovery_file, &mut map, &job)?;
         if !ok {
             return cancelled_result(&job, map, mapfile_path);
         }
@@ -227,7 +227,7 @@ pub fn run_recovery(
             &opts,
             sector_size,
         )?;
-        flush_map(&mut map, &job)?;
+        flush_map(&recovery_file, &mut map, &job)?;
         if !ok {
             return cancelled_result(&job, map, mapfile_path);
         }
@@ -239,7 +239,7 @@ pub fn run_recovery(
         hash_pass::hash_pass(&output_path, &job.algorithms).map_err(RecoveryError::Hash)?;
 
     // Final mapfile flush.
-    flush_map(&mut map, &job)?;
+    flush_map(&recovery_file, &mut map, &job)?;
 
     // ── Emit RecoveryCompleted ────────────────────────────────────────────────
     emit_audit(&job, || AuditEvent::RecoveryCompleted {
@@ -279,7 +279,18 @@ fn start_pass(job: &AcquireJob, map: &mut map::MapState, pass: &'static str, pas
     }
 }
 
-pub(crate) fn flush_map(map: &mut map::MapState, job: &AcquireJob) -> Result<(), RecoveryError> {
+pub(crate) fn flush_map(
+    file: &recovery_file::RecoveryFile,
+    map: &mut map::MapState,
+    job: &AcquireJob,
+) -> Result<(), RecoveryError> {
+    // Sync the image before the mapfile so the two are crash-consistent:
+    // the map must never claim a region is Finished while its bytes are
+    // still only in the OS page cache.
+    file.sync().map_err(|e| RecoveryError::Write {
+        path: file.path().to_owned(),
+        source: e,
+    })?;
     map.flush().map_err(|e| RecoveryError::MapfileWrite {
         path: map.mapfile_path.clone(),
         source: e,

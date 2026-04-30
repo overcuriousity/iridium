@@ -48,6 +48,15 @@ impl RecoveryFile {
         self.file.write_all_at(data, offset)
     }
 
+    /// Flush all pending writes to the underlying storage device.
+    ///
+    /// Call this before flushing the mapfile so the image and map stay
+    /// crash-consistent: the map must never claim a region is Finished while
+    /// the corresponding image bytes are still only in the OS page cache.
+    pub fn sync(&self) -> io::Result<()> {
+        self.file.sync_data()
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }

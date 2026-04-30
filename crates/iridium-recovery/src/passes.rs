@@ -124,7 +124,7 @@ pub fn forward_pass(
         send_progress(job, map, "forward");
 
         if last_flush.elapsed().as_secs() >= opts.mapfile_sync_secs {
-            flush_map(map, job)?;
+            flush_map(file, map, job)?;
             last_flush = Instant::now();
         }
     }
@@ -188,7 +188,7 @@ pub fn trim_pass(
             send_progress(job, map, "trim");
 
             if last_flush.elapsed().as_secs() >= opts.mapfile_sync_secs {
-                flush_map(map, job)?;
+                flush_map(file, map, job)?;
                 last_flush = Instant::now();
             }
         }
@@ -244,7 +244,7 @@ pub fn trim_pass(
             send_progress(job, map, "trim");
 
             if last_flush.elapsed().as_secs() >= opts.mapfile_sync_secs {
-                flush_map(map, job)?;
+                flush_map(file, map, job)?;
                 last_flush = Instant::now();
             }
         }
@@ -336,7 +336,7 @@ pub fn scrape_pass(
             send_progress(job, map, "scrape");
 
             if last_flush.elapsed().as_secs() >= opts.mapfile_sync_secs {
-                flush_map(map, job)?;
+                flush_map(file, map, job)?;
                 last_flush = Instant::now();
             }
         }
