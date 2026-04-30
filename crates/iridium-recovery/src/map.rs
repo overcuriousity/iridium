@@ -146,7 +146,14 @@ impl MapState {
         if size == 0 {
             return;
         }
-        let end = pos.checked_add(size).unwrap_or(self.total_bytes);
+        let end = pos
+            .checked_add(size)
+            .expect("MapState::mark: pos + size overflows u64");
+        debug_assert!(
+            end <= self.total_bytes,
+            "MapState::mark: pos {pos} + size {size} = {end} exceeds total_bytes {}",
+            self.total_bytes,
+        );
         self.split_at(pos);
         self.split_at(end);
         // Regions are kept sorted by pos; binary-search to avoid an O(n) scan
@@ -397,6 +404,33 @@ mod tests {
         // remaining 512 bytes are NonTried
         assert_eq!(m.finished_bytes(), 256);
         assert_eq!(m.bad_bytes(), 256);
+    }
+
+    #[test]
+    fn mark_across_mixed_regions_updates_caches_correctly() {
+        // Build mixed status: [0, 256)=Finished, [256, 512)=BadSector,
+        // [512, 768)=NonTrimmed, [768, 1024)=NonTried.
+        let mut m = make_map(1024);
+        m.mark(0, 256, Status::Finished);
+        m.mark(256, 256, Status::BadSector);
+        m.mark(512, 256, Status::NonTrimmed);
+        assert_eq!(m.finished_bytes(), 256);
+        assert_eq!(m.bad_bytes(), 256);
+
+        // Mark [128, 896) as Finished — crosses 4 regions, splitting two of them.
+        // Removes 128 Finished + 256 BadSector; adds 768 Finished.
+        m.mark(128, 768, Status::Finished);
+        assert_eq!(m.finished_bytes(), 256 - 128 + 768);
+        assert_eq!(m.bad_bytes(), 0);
+
+        // Verify against ground truth.
+        let truth: u64 = m
+            .regions
+            .iter()
+            .filter(|r| r.status == Status::Finished)
+            .map(|r| r.size)
+            .sum();
+        assert_eq!(m.finished_bytes(), truth);
     }
 
     #[test]

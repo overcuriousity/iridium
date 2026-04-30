@@ -31,7 +31,7 @@ contract.
 |------|----------|------------|----------|
 | 1 — forward | chunk_size (1 MiB default) | mark `+`, write | mark `*`, zero-fill, continue |
 | 2 — trim | sector_size from both ends | mark `+`, write | stop scan from that side |
-| 3 — scrape | sector_size, up to N retries | mark `+`, write | mark `-`, zero-fill |
+| 3 — scrape | sector_size, 1 + `max_retries` attempts per sector | mark `+`, write | mark `-`, zero-fill |
 | 4 — hash | 1 MiB sequential re-read of output image | compute digests | — |
 
 Pass 4 hashes the completed output image (not the source device) because

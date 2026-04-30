@@ -27,10 +27,14 @@ pub use passes::BlockReader;
 // ── Public types ──────────────────────────────────────────────────────────────
 
 /// Tuning parameters for a recovery run.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RecoveryOptions {
     /// Read chunk size for the forward pass (bytes).  Defaults to 1 MiB.
     pub chunk_size: usize,
-    /// Per-sector retry count in the scraping pass.  Defaults to 3.
+    /// Per-sector additional retry attempts in the scraping pass, beyond the
+    /// initial attempt.  Total attempts per sector = 1 + `max_retries`.
+    /// Defaults to 3 (i.e. 4 attempts per sector).
     pub max_retries: u32,
     /// Explicit mapfile path.  Defaults to `<dest_path>.map`.
     pub mapfile_path: Option<PathBuf>,
@@ -62,7 +66,12 @@ pub struct RecoveryResult {
     pub bad_bytes: u64,
     /// Path of the GNU ddrescue-compatible mapfile.
     pub mapfile_path: PathBuf,
-    /// `false` if the run was stopped by the cancel flag.
+    /// `false` if the run was stopped by the cancel flag, `true` otherwise.
+    ///
+    /// Cancellation is signalled here, not via [`RecoveryError`]: a cancelled
+    /// run still returns `Ok(RecoveryResult { complete: false, .. })` with a
+    /// usable partial image and mapfile.  Callers detect cancellation by
+    /// checking this field.
     pub complete: bool,
 }
 
@@ -185,7 +194,7 @@ pub fn run_recovery(
     // ── Pass 1: forward ───────────────────────────────────────────────────────
     start_pass(&job, &mut map, "forward", 1);
     let ok = passes::forward_pass(&mut reader, &mut map, &recovery_file, &job, &opts)?;
-    flush_map(&mut map, &job, &opts)?;
+    flush_map(&mut map, &job)?;
     if !ok {
         return cancelled_result(&job, map, mapfile_path);
     }
@@ -201,7 +210,7 @@ pub fn run_recovery(
             &opts,
             sector_size,
         )?;
-        flush_map(&mut map, &job, &opts)?;
+        flush_map(&mut map, &job)?;
         if !ok {
             return cancelled_result(&job, map, mapfile_path);
         }
@@ -218,7 +227,7 @@ pub fn run_recovery(
             &opts,
             sector_size,
         )?;
-        flush_map(&mut map, &job, &opts)?;
+        flush_map(&mut map, &job)?;
         if !ok {
             return cancelled_result(&job, map, mapfile_path);
         }
@@ -230,7 +239,7 @@ pub fn run_recovery(
         hash_pass::hash_pass(&output_path, &job.algorithms).map_err(RecoveryError::Hash)?;
 
     // Final mapfile flush.
-    flush_map(&mut map, &job, &opts)?;
+    flush_map(&mut map, &job)?;
 
     // ── Emit RecoveryCompleted ────────────────────────────────────────────────
     emit_audit(&job, || AuditEvent::RecoveryCompleted {
@@ -270,11 +279,7 @@ fn start_pass(job: &AcquireJob, map: &mut map::MapState, pass: &'static str, pas
     }
 }
 
-fn flush_map(
-    map: &mut map::MapState,
-    job: &AcquireJob,
-    _opts: &RecoveryOptions,
-) -> Result<(), RecoveryError> {
+pub(crate) fn flush_map(map: &mut map::MapState, job: &AcquireJob) -> Result<(), RecoveryError> {
     map.flush().map_err(|e| RecoveryError::MapfileWrite {
         path: map.mapfile_path.clone(),
         source: e,
@@ -309,7 +314,7 @@ fn cancelled_result(
     })
 }
 
-fn emit_audit(job: &AcquireJob, make_event: impl FnOnce() -> AuditEvent) {
+pub(crate) fn emit_audit(job: &AcquireJob, make_event: impl FnOnce() -> AuditEvent) {
     if let Some(log) = &job.audit
         && let Err(e) = log.append(&make_event())
     {

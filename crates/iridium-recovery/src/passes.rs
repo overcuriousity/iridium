@@ -7,7 +7,7 @@ use iridium_audit::AuditEvent;
 use time::OffsetDateTime;
 
 use crate::{
-    RecoveryError, RecoveryOptions,
+    RecoveryError, RecoveryOptions, emit_audit, flush_map,
     map::{MapState, Status},
     recovery_file::RecoveryFile,
 };
@@ -70,10 +70,8 @@ pub fn forward_pass(
                 // Treat it like a read error so the region is marked NonTrimmed
                 // and retried in the trim/scrape passes rather than silently
                 // left as NonTried and included as zero-filled data.
-                let e = io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    format!("unexpected EOF at offset {offset}: got 0 bytes, expected up to {len}"),
-                );
+                let err_msg =
+                    format!("unexpected EOF at offset {offset}: got 0 bytes, expected up to {len}");
                 buf[..len].fill(0);
                 file.write_at(offset, &buf[..len])
                     .map_err(|e| RecoveryError::Write {
@@ -86,7 +84,7 @@ pub fn forward_pass(
                     ts: OffsetDateTime::now_utc(),
                     offset,
                     length: len as u64,
-                    error: e.to_string(),
+                    error: err_msg,
                     map_status: Status::NonTrimmed.as_str().to_owned(),
                 });
                 offset += len as u64;
@@ -125,7 +123,7 @@ pub fn forward_pass(
         send_progress(job, map, "forward");
 
         if last_flush.elapsed().as_secs() >= opts.mapfile_sync_secs {
-            flush_map_and_notify(map, job, opts)?;
+            flush_map(map, job)?;
             last_flush = Instant::now();
         }
     }
@@ -189,7 +187,7 @@ pub fn trim_pass(
             send_progress(job, map, "trim");
 
             if last_flush.elapsed().as_secs() >= opts.mapfile_sync_secs {
-                flush_map_and_notify(map, job, opts)?;
+                flush_map(map, job)?;
                 last_flush = Instant::now();
             }
         }
@@ -245,7 +243,7 @@ pub fn trim_pass(
             send_progress(job, map, "trim");
 
             if last_flush.elapsed().as_secs() >= opts.mapfile_sync_secs {
-                flush_map_and_notify(map, job, opts)?;
+                flush_map(map, job)?;
                 last_flush = Instant::now();
             }
         }
@@ -337,7 +335,7 @@ pub fn scrape_pass(
             send_progress(job, map, "scrape");
 
             if last_flush.elapsed().as_secs() >= opts.mapfile_sync_secs {
-                flush_map_and_notify(map, job, opts)?;
+                flush_map(map, job)?;
                 last_flush = Instant::now();
             }
         }
@@ -348,24 +346,6 @@ pub fn scrape_pass(
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
-fn flush_map_and_notify(
-    map: &mut MapState,
-    job: &AcquireJob,
-    _opts: &RecoveryOptions,
-) -> Result<(), RecoveryError> {
-    map.flush().map_err(|e| RecoveryError::MapfileWrite {
-        path: map.mapfile_path.clone(),
-        source: e,
-    })?;
-    emit_audit(job, || AuditEvent::MapfileFlushed {
-        ts: OffsetDateTime::now_utc(),
-        mapfile_path: map.mapfile_path.clone(),
-        finished_bytes: map.finished_bytes(),
-        bad_bytes: map.bad_bytes(),
-    });
-    Ok(())
-}
-
 fn send_progress(job: &AcquireJob, map: &MapState, pass: &'static str) {
     if let Some(tx) = &job.progress_tx {
         let _ = tx.try_send(ProgressEvent::RecoveryProgress {
@@ -373,14 +353,6 @@ fn send_progress(job: &AcquireJob, map: &MapState, pass: &'static str) {
             finished_bytes: map.finished_bytes(),
             bad_bytes: map.bad_bytes(),
         });
-    }
-}
-
-fn emit_audit(job: &AcquireJob, make_event: impl FnOnce() -> AuditEvent) {
-    if let Some(log) = &job.audit
-        && let Err(e) = log.append(&make_event())
-    {
-        log::warn!("iridium-recovery: failed to append audit event: {e}");
     }
 }
 
@@ -549,23 +521,24 @@ mod tests {
     #[test]
     fn trim_pass_rescues_edges_of_bad_region() {
         let (job, dir, _) = make_job_and_dir();
-        // 4 sectors of 128 bytes each; sector 1 and 2 are bad
         let mut data = vec![0u8; 512];
         // Poison all data so we can check what was written.
         for (i, b) in data.iter_mut().enumerate() {
             *b = i as u8;
         }
 
+        // Pre-condition: [0..128]=Finished, [128..384]=NonTrimmed, [384..512]=Finished.
+        // Sectors at offsets 128 and 256 always error.
+        // Forward scan over [128, 384): tries 128 → error → stops at fwd=128.
+        // Backward scan: bwd=384, tries read_start=256 → error → stops with bwd=384.
+        // Post-loop: marks [fwd=128, bwd=384) as NonScraped.
         let mut reader = MockReader::new(data.clone())
-            .with_permanent_error(128) // sector 1
-            .with_permanent_error(256); // sector 2
+            .with_permanent_error(128)
+            .with_permanent_error(256);
 
         let (mut map, file) = make_map_and_file(512, dir.path(), "trim");
         let opts = make_opts(512);
 
-        // Simulate forward pass having already marked the bad region.
-        // Forward pass with chunk=512 would mark all as NonTrimmed (error at 0).
-        // Instead manually set up: [0..128]=Finished, [128..384]=NonTrimmed, [384..512]=Finished.
         map.mark(0, 128, Status::Finished);
         map.mark(128, 256, Status::NonTrimmed);
         map.mark(384, 128, Status::Finished);
@@ -573,16 +546,17 @@ mod tests {
         let ok = trim_pass(&mut reader, &mut map, &file, &job, &opts, 128).unwrap();
         assert!(ok);
 
-        // Edges should be rescued; middle [128, 384) is NonScraped or smaller.
-        // With permanent errors at 128 and 256, forward scan stops at sector 1 (128),
-        // backward scan stops at sector 3 (256..384 tries 256 first → error, stops).
-        // But 384 reads ok backward (from 512 backward to 384 succeeds — that's sector 3 = offset 384).
-        // Wait, backward scan starts at reg_end=384, tries read_start=384-128=256 → error → stops.
-        // So middle = [128, 256) → NonScraped... but [256, 384) stays NonTrimmed
-        // actually that's a single region [128, 384) = NonTrimmed → after trim:
-        // fwd stops at 128 (error), bwd starts at 384, reads from 256 → error, stops at 384.
-        // So remaining [128, 384) = NonScraped.
-        assert!(map.has_status(Status::NonScraped) || map.finished_bytes() == 512 - 256);
+        assert_eq!(map.finished_bytes(), 256, "edges should remain Finished");
+        assert!(
+            !map.has_status(Status::NonTrimmed),
+            "no NonTrimmed regions should remain after trim"
+        );
+
+        // The middle [128, 384) is now NonScraped.
+        let non_scraped: Vec<_> = map.regions_with_status(Status::NonScraped).collect();
+        assert_eq!(non_scraped.len(), 1);
+        assert_eq!(non_scraped[0].pos, 128);
+        assert_eq!(non_scraped[0].size, 256);
     }
 
     // ── Scrape pass ──────────────────────────────────────────────────────────
@@ -621,6 +595,35 @@ mod tests {
         assert!(ok);
         assert_eq!(map.bad_bytes(), 128);
         assert!(!map.has_status(Status::NonScraped));
+    }
+
+    // ── Periodic mapfile flush ────────────────────────────────────────────────
+
+    #[test]
+    fn periodic_flush_rewrites_mapfile_mid_pass() {
+        let (job, dir, _) = make_job_and_dir();
+        let data = vec![0xAAu8; 4096];
+        let mut reader = MockReader::new(data);
+        let img = dir.path().join("flush.img");
+        let mpath = dir.path().join("flush.map");
+        let mut map = MapState::new(4096, mpath.clone(), "0.1.0".into(), vec![]);
+        let file = RecoveryFile::create(&img, 4096).unwrap();
+
+        // Tiny chunk forces many iterations; sync_secs=0 forces a flush every iteration.
+        let mut opts = make_opts(256);
+        opts.mapfile_sync_secs = 0;
+
+        let ok = forward_pass(&mut reader, &mut map, &file, &job, &opts).unwrap();
+        assert!(ok);
+
+        // Mapfile must exist and reflect partial progress as a valid ddrescue file.
+        assert!(mpath.exists(), "mapfile must exist after periodic flush");
+        let content = std::fs::read_to_string(&mpath).unwrap();
+        assert!(content.contains("iridium-recovery"), "valid mapfile header");
+        assert!(
+            content.lines().any(|l| l.ends_with('+')),
+            "mapfile must record at least one Finished region: {content}"
+        );
     }
 
     // ── Audit event integration ───────────────────────────────────────────────
