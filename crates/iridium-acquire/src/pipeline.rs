@@ -2,7 +2,9 @@
 
 use std::sync::atomic::Ordering;
 
+use iridium_audit::{AuditEvent, DigestRecord, JobMetadata};
 use iridium_hash::new_hasher;
+use time::OffsetDateTime;
 
 use crate::{AcquireError, AcquireJob, AcquireResult, ProgressEvent, writer::ImageWriter};
 
@@ -28,8 +30,15 @@ pub(crate) fn run(
             source: e,
         })?;
 
-    // TODO(phase-5): wire iridium-audit — log acquisition start with job metadata.
-    audit_start(job);
+    emit_audit(job, || AuditEvent::Start {
+        ts: OffsetDateTime::now_utc(),
+        iridium_version: env!("CARGO_PKG_VERSION").to_owned(),
+        libewf_version: iridium_ewf::libewf_version().to_owned(),
+        argv: std::env::args_os()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect(),
+        job: job_metadata(job),
+    });
 
     let total_bytes = job.source.size_bytes;
     send(job, ProgressEvent::Started { total_bytes });
@@ -53,8 +62,11 @@ pub(crate) fn run(
                 complete: false,
             };
             send(job, ProgressEvent::Cancelled { bytes_done: offset });
-            // TODO(phase-5): wire iridium-audit — log cancellation.
-            audit_end(&result);
+            emit_audit(job, || AuditEvent::Cancelled {
+                ts: OffsetDateTime::now_utc(),
+                bytes_processed: offset,
+                bad_chunks,
+            });
             return Ok(result);
         }
 
@@ -70,8 +82,9 @@ pub(crate) fn run(
             }
             Err(e) => {
                 // Zero-fill the sector(s) covered by this chunk and continue.
+                let error_str = e.to_string();
                 log::warn!(
-                    "iridium-acquire: read error at offset {offset}: {e}; \
+                    "iridium-acquire: read error at offset {offset}: {error_str}; \
                      zero-filling chunk and continuing"
                 );
                 bad_chunks += 1;
@@ -82,6 +95,13 @@ pub(crate) fn run(
                     h.update(&buf[..fill_len]);
                 }
                 writer.write_chunk(&buf[..fill_len])?;
+                emit_audit(job, || AuditEvent::ReadError {
+                    ts: OffsetDateTime::now_utc(),
+                    offset,
+                    length: fill_len as u64,
+                    error: error_str,
+                    bad_chunks_total: bad_chunks,
+                });
                 fill_len
             }
         };
@@ -121,8 +141,19 @@ pub(crate) fn run(
         },
     );
 
-    // TODO(phase-5): wire iridium-audit — log acquisition end with digests.
-    audit_end(&result);
+    emit_audit(job, || AuditEvent::Completed {
+        ts: OffsetDateTime::now_utc(),
+        bytes_processed: result.bytes_processed,
+        bad_chunks: result.bad_chunks,
+        digests: result
+            .digests
+            .iter()
+            .map(|d| DigestRecord {
+                algorithm: d.algorithm,
+                hex: d.hex.clone(),
+            })
+            .collect(),
+    });
 
     Ok(result)
 }
@@ -136,10 +167,34 @@ fn send(job: &AcquireJob, event: ProgressEvent) {
     }
 }
 
-// ── Phase 5 stubs ─────────────────────────────────────────────────────────────
+/// Best-effort audit event emission.  The closure is only called when an
+/// audit log is present, avoiding any allocation for event construction when
+/// auditing is disabled.  Append failures are reported via `log::warn!` and
+/// never abort the acquisition.
+fn emit_audit(job: &AcquireJob, make_event: impl FnOnce() -> AuditEvent) {
+    if let Some(audit_log) = &job.audit
+        && let Err(e) = audit_log.append(&make_event())
+    {
+        log::warn!("iridium-audit: failed to append audit event: {e}");
+    }
+}
 
-/// TODO(phase-5): replace with real `iridium_audit::Log::record_start()` call.
-fn audit_start(_job: &AcquireJob) {}
-
-/// TODO(phase-5): replace with real `iridium_audit::Log::record_end()` call.
-fn audit_end(_result: &AcquireResult) {}
+/// Build a [`JobMetadata`] snapshot from the current job state.
+fn job_metadata(job: &AcquireJob) -> JobMetadata {
+    JobMetadata {
+        source_path: job.source.path.clone(),
+        model: job.source.model.clone(),
+        serial: job.source.serial.clone(),
+        size_bytes: job.source.size_bytes,
+        logical_sector_size: job.source.logical_sector_size,
+        sector_size: job.source.sector_size,
+        hpa_size_bytes: job.source.hpa_size_bytes,
+        dco_restricted: job.source.dco_restricted,
+        removable: job.source.removable,
+        rotational: job.source.rotational,
+        dest_path: job.dest_path.clone(),
+        format: job.format,
+        algorithms: job.algorithms.clone(),
+        chunk_size: job.chunk_size,
+    }
+}

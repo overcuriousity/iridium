@@ -5,14 +5,14 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "iridium — append-only audit log with optional PGP signing"
+description = "iridium — append-only JSONL audit log"
 
 [dependencies]
 iridium-core = { path = "../iridium-core" }
 serde.workspace      = true
 serde_json.workspace = true
 thiserror.workspace  = true
+time.workspace       = true
 
-[features]
-# Enable PGP signing of closed audit logs via sequoia-openpgp (pure-Rust)
-pgp-signing = []
+[dev-dependencies]
+tempfile.workspace = true

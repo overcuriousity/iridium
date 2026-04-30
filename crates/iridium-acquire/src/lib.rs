@@ -10,7 +10,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
-use iridium_core::HashAlg;
+use iridium_core::{HashAlg, ImageFormat};
 use iridium_device::Disk;
 use iridium_hash::Digest;
 
@@ -36,13 +36,24 @@ pub struct AcquireJob {
     /// unbounded channel (`crossbeam_channel::unbounded`) if you need every event
     /// delivered without drops.
     pub progress_tx: Option<crossbeam_channel::Sender<ProgressEvent>>,
+    /// Optional audit log.  When set, the pipeline appends `Start`, `ReadError`,
+    /// `Cancelled`, and `Completed` events.  The caller is responsible for
+    /// sealing the log when the session ends. Because this field wraps the log
+    /// in an [`Arc`], [`iridium_audit::Log::seal`] (which consumes `self`)
+    /// cannot be called directly; the caller must first regain sole ownership
+    /// via [`Arc::try_unwrap`] after all other clones have been dropped.
+    pub audit: Option<Arc<iridium_audit::Log>>,
+    /// Output format; used only for audit metadata.  Set automatically by the
+    /// [`run`] and [`run_ewf`] convenience entry points; `None` when using
+    /// [`run_with_writer`] directly without setting it.
+    pub format: Option<ImageFormat>,
 }
 
 /// 1 MiB — matches Guymager's default chunk size.
 pub const DEFAULT_CHUNK_SIZE: usize = 1024 * 1024;
 
 impl AcquireJob {
-    /// Construct a job with sensible defaults (1 MiB chunks, no cancel, no progress).
+    /// Construct a job with sensible defaults (1 MiB chunks, no cancel, no progress, no audit).
     pub fn new(source: Disk, dest_path: PathBuf, algorithms: Vec<HashAlg>) -> Self {
         Self {
             source,
@@ -51,6 +62,8 @@ impl AcquireJob {
             chunk_size: DEFAULT_CHUNK_SIZE,
             cancel: Arc::new(AtomicBool::new(false)),
             progress_tx: None,
+            audit: None,
+            format: None,
         }
     }
 }
@@ -155,10 +168,11 @@ pub(crate) fn validate_job(job: &AcquireJob) -> Result<(), AcquireError> {
 /// Creates a [`RawWriter`] for `job.dest_path` and runs the
 /// read → hash → write pipeline.  To use a different output format (e.g. EWF
 /// in Phase 4), call [`run_with_writer`] directly.
-pub fn run(job: AcquireJob) -> Result<AcquireResult, AcquireError> {
+pub fn run(mut job: AcquireJob) -> Result<AcquireResult, AcquireError> {
     // Validate before creating/truncating the output file so an invalid job
     // never leaves a zero-length image on disk.
     validate_job(&job)?;
+    job.format.get_or_insert(ImageFormat::Raw);
     let writer = Box::new(RawWriter::create(&job.dest_path)?);
     pipeline::run(&job, writer)
 }
@@ -179,8 +193,9 @@ pub fn run_with_writer(
 /// Equivalent to constructing an [`EwfWriter`] and calling [`run_with_writer`].
 /// libewf appends the `.E01` extension automatically — `job.dest_path` must
 /// not include an extension.
-pub fn run_ewf(job: AcquireJob) -> Result<AcquireResult, AcquireError> {
+pub fn run_ewf(mut job: AcquireJob) -> Result<AcquireResult, AcquireError> {
     validate_job(&job)?;
+    job.format.get_or_insert(ImageFormat::Ewf);
     let writer = Box::new(EwfWriter::create(
         &job.dest_path,
         job.source.size_bytes,
@@ -299,6 +314,81 @@ mod tests {
             run_with_writer(job, writer),
             Err(AcquireError::NoAlgorithms)
         ));
+    }
+
+    #[test]
+    fn audit_log_receives_start_and_completed_events() {
+        use std::sync::Arc;
+
+        let data = b"audit wiring test payload";
+        let (mut job, dir) = make_job(data, vec![HashAlg::Sha256]);
+
+        let log_path = dir.path().join("audit.jsonl");
+        let audit_log = Arc::new(iridium_audit::Log::open(&log_path).unwrap());
+        job.audit = Some(Arc::clone(&audit_log));
+
+        let writer = Box::new(MemWriter(Vec::new()));
+        let result = run_with_writer(job, writer).unwrap();
+        assert!(result.complete);
+
+        Arc::try_unwrap(audit_log).ok().unwrap().seal().unwrap();
+
+        let events: Vec<serde_json::Value> = std::fs::read_to_string(&log_path)
+            .unwrap()
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+
+        assert!(
+            events.iter().any(|e| e["event"] == "start"),
+            "must have a start event; got: {events:?}"
+        );
+        assert!(
+            events.iter().any(|e| e["event"] == "completed"),
+            "must have a completed event; got: {events:?}"
+        );
+        assert_eq!(
+            events.last().unwrap()["event"],
+            "sealed",
+            "last event must be sealed"
+        );
+    }
+
+    #[test]
+    fn audit_log_receives_cancelled_event() {
+        use std::sync::Arc;
+        use std::sync::atomic::Ordering;
+
+        let data = b"cancel audit test";
+        let (mut job, dir) = make_job(data, vec![HashAlg::Md5]);
+
+        let log_path = dir.path().join("cancel_audit.jsonl");
+        let audit_log = Arc::new(iridium_audit::Log::open(&log_path).unwrap());
+        job.audit = Some(Arc::clone(&audit_log));
+        job.cancel.store(true, Ordering::Relaxed);
+
+        let writer = Box::new(MemWriter(Vec::new()));
+        let result = run_with_writer(job, writer).unwrap();
+        assert!(!result.complete);
+
+        Arc::try_unwrap(audit_log).ok().unwrap().seal().unwrap();
+
+        let events: Vec<serde_json::Value> = std::fs::read_to_string(&log_path)
+            .unwrap()
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+
+        assert!(
+            events.iter().any(|e| e["event"] == "start"),
+            "must have a start event; got: {events:?}"
+        );
+        assert!(
+            events.iter().any(|e| e["event"] == "cancelled"),
+            "must have a cancelled event; got: {events:?}"
+        );
     }
 
     #[test]
