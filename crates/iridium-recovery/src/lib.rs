@@ -259,16 +259,14 @@ pub fn run_recovery(
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
-fn start_pass(job: &AcquireJob, map: &mut map::MapState, pass: &str, pass_num: u8) {
+fn start_pass(job: &AcquireJob, map: &mut map::MapState, pass: &'static str, pass_num: u8) {
     map.current_pass = pass_num;
     emit_audit(job, || AuditEvent::RecoveryPassStarted {
         ts: OffsetDateTime::now_utc(),
         pass: pass.to_owned(),
     });
     if let Some(tx) = &job.progress_tx {
-        let _ = tx.try_send(ProgressEvent::RecoveryPassStarted {
-            pass: pass.to_owned(),
-        });
+        let _ = tx.try_send(ProgressEvent::RecoveryPassStarted { pass });
     }
 }
 

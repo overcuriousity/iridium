@@ -25,8 +25,7 @@ pub trait BlockReader: Send {
 
 impl BlockReader for iridium_device::DeviceReader {
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, io::Error> {
-        iridium_device::DeviceReader::read_at(self, offset, buf)
-            .map_err(io::Error::other)
+        iridium_device::DeviceReader::read_at(self, offset, buf).map_err(io::Error::other)
     }
 
     fn size_bytes(&self) -> u64 {
@@ -368,10 +367,10 @@ fn flush_map_and_notify(
     Ok(())
 }
 
-fn send_progress(job: &AcquireJob, map: &MapState, pass: &str) {
+fn send_progress(job: &AcquireJob, map: &MapState, pass: &'static str) {
     if let Some(tx) = &job.progress_tx {
         let _ = tx.try_send(ProgressEvent::RecoveryProgress {
-            pass: pass.to_owned(),
+            pass,
             finished_bytes: map.finished_bytes(),
             bad_bytes: map.bad_bytes(),
         });

@@ -83,10 +83,10 @@ pub enum ProgressEvent {
     /// Emitted when a recovery pass begins.
     ///
     /// `pass` is one of `"forward"`, `"trim"`, `"scrape"`, or `"hash"`.
-    RecoveryPassStarted { pass: String },
+    RecoveryPassStarted { pass: &'static str },
     /// Emitted after each chunk during recovery passes.
     RecoveryProgress {
-        pass: String,
+        pass: &'static str,
         finished_bytes: u64,
         bad_bytes: u64,
     },
@@ -162,7 +162,7 @@ pub enum AcquireError {
 
 /// Validate fields that would otherwise only fail deep inside the pipeline or
 /// after an output file has already been created.
-pub fn validate_job(job: &AcquireJob) -> Result<(), AcquireError> {
+pub(crate) fn validate_job(job: &AcquireJob) -> Result<(), AcquireError> {
     if job.algorithms.is_empty() {
         return Err(AcquireError::NoAlgorithms);
     }
