@@ -84,7 +84,11 @@ pub enum ProgressEvent {
     /// `pass` is one of `"forward"`, `"trim"`, `"scrape"`, or `"hash"`.
     RecoveryPassStarted { pass: String },
     /// Emitted after each chunk during recovery passes.
-    RecoveryProgress { pass: String, finished_bytes: u64, bad_bytes: u64 },
+    RecoveryProgress {
+        pass: String,
+        finished_bytes: u64,
+        bad_bytes: u64,
+    },
 }
 
 /// Outcome of a completed (or cancelled) acquisition.

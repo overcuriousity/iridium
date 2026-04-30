@@ -64,7 +64,11 @@ mod tests {
         assert_eq!(digests.len(), 3);
         for (alg, digest) in algs.iter().zip(&digests) {
             assert_eq!(digest.algorithm, *alg);
-            assert_eq!(digest.hex, expected_digest(&data, *alg), "algorithm {alg:?}");
+            assert_eq!(
+                digest.hex,
+                expected_digest(&data, *alg),
+                "algorithm {alg:?}"
+            );
         }
     }
 
