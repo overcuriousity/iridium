@@ -15,8 +15,8 @@ tokio        = { version = "1", features = ["rt-multi-thread", "sync", "io-util"
 # parallelism
 rayon        = "1"
 # GUI
-egui         = "0.34"
-eframe       = { version = "0.34", default-features = false, features = ["default_fonts", "glow"] }
+egui         = "0.32"
+eframe       = { version = "0.32", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
 # CLI
 clap         = { version = "4", features = ["derive"] }
 # serialisation
@@ -37,5 +37,9 @@ log          = "0.4"
 crossbeam-channel = "0.5"
 # timestamps
 time         = { version = "0.3", features = ["serde", "formatting", "parsing"] }
+# config file format
+toml     = "0.8"
+# XDG base directory lookup
+directories = "5"
 # test helpers
 tempfile = "3"
