@@ -60,13 +60,10 @@ fn run_job(
     };
 
     if spec.recovery_mode {
-        let outcome = run_recovery_job(&spec, cancel, progress_tx.clone(), audit.clone())?;
+        let outcome = run_recovery_job(&spec, cancel, progress_tx.clone(), audit.clone());
         egui_ctx.request_repaint();
-
-        // seal the audit log
         seal_audit(audit);
-
-        return Ok(outcome);
+        return outcome;
     }
 
     // Normal acquisition.
@@ -83,12 +80,20 @@ fn run_job(
     let result = match spec.format {
         ImageFormat::Ewf => {
             job.format = Some(ImageFormat::Ewf);
-            iridium_acquire::run_ewf(job)?
+            iridium_acquire::run_ewf(job)
         }
-        _ => iridium_acquire::run(job)?,
+        _ => iridium_acquire::run(job),
     };
 
     egui_ctx.request_repaint();
+
+    let result = match result {
+        Ok(r) => r,
+        Err(e) => {
+            seal_audit(audit);
+            return Err(e.into());
+        }
+    };
 
     if !result.complete {
         seal_audit(audit);
@@ -97,12 +102,15 @@ fn run_job(
 
     let verified = if spec.verify_after {
         let image_path = image_file_path(&spec);
+        let tx = progress_tx.clone();
         match verify::verify_image(
             &image_path,
             spec.format,
             &spec.algorithms,
             &result.digests,
-            |_, _| {},
+            move |done, total| {
+                let _ = tx.send(ProgressEvent::VerifyProgress { bytes_done: done, total_bytes: total });
+            },
         ) {
             Ok(()) => true,
             Err(e) => {
@@ -138,7 +146,7 @@ fn run_recovery_job(
     );
     job.chunk_size = spec.chunk_size;
     job.cancel = cancel;
-    job.progress_tx = Some(progress_tx);
+    job.progress_tx = Some(progress_tx.clone());
     job.audit = audit;
     // recovery always writes Raw
     job.format = Some(ImageFormat::Raw);
@@ -151,12 +159,15 @@ fn run_recovery_job(
 
     let verified = if spec.verify_after && result.complete {
         let image_path = image_file_path(spec);
+        let tx = progress_tx.clone();
         match verify::verify_image(
             &image_path,
             ImageFormat::Raw,
             &spec.algorithms,
             &result.digests,
-            |_, _| {},
+            move |done, total| {
+                let _ = tx.send(ProgressEvent::VerifyProgress { bytes_done: done, total_bytes: total });
+            },
         ) {
             Ok(()) => true,
             Err(e) => {

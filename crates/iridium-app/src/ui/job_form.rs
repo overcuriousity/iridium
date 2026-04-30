@@ -95,9 +95,15 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
             // Verify after acquire
             ui.checkbox(&mut spec.verify_after, "Verify after acquisition");
 
+            let dest_ok = !spec.dest_path.as_os_str().is_empty()
+                && spec.dest_path.parent().is_some();
+            if !dest_ok {
+                ui.colored_label(egui::Color32::RED, "Output path is required.");
+            }
+
             ui.separator();
             ui.horizontal(|ui| {
-                let ready = !spec.algorithms.is_empty();
+                let ready = !spec.algorithms.is_empty() && dest_ok;
                 if ui.add_enabled(ready, egui::Button::new("Start")).clicked() {
                     submit = true;
                 }

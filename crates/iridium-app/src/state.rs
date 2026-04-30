@@ -43,7 +43,7 @@ pub struct ProgressSnapshot {
     /// Non-empty during recovery passes.
     pub recovery_pass: Option<&'static str>,
     pub recovery_bad_bytes: u64,
-    /// Set to Some(...) when the verify pass is running.
+    /// Bytes verified so far; non-zero only while `verifying` is true.
     pub verify_bytes_done: u64,
     pub verifying: bool,
 }
@@ -137,12 +137,11 @@ impl AppState {
     }
 
     /// Drain the progress channel and update `active.progress`.
-    /// Returns `true` if the job has finished (Completed or Cancelled event received).
+    /// Returns `true` when the worker thread has fully exited (including any verify pass).
     pub fn poll_progress(&mut self) -> bool {
         let Some(active) = self.active.as_mut() else {
             return false;
         };
-        let mut finished = false;
         for event in active.progress_rx.try_iter() {
             match event {
                 ProgressEvent::Started { total_bytes } => {
@@ -153,8 +152,9 @@ impl AppState {
                     active.progress.bad_chunks = bad_chunks;
                     active.progress.recovery_pass = None;
                 }
-                ProgressEvent::Completed { .. } | ProgressEvent::Cancelled { .. } => {
-                    finished = true;
+                ProgressEvent::VerifyProgress { bytes_done, .. } => {
+                    active.progress.verifying = true;
+                    active.progress.verify_bytes_done = bytes_done;
                 }
                 ProgressEvent::RecoveryPassStarted { pass } => {
                     active.progress.recovery_pass = Some(pass);
@@ -172,7 +172,9 @@ impl AppState {
             self.audit_lines = tail_file(path, 200);
         }
 
-        finished
+        // Use thread completion rather than a channel event so that a verify pass
+        // running after ProgressEvent::Completed doesn't cause a premature join.
+        active.handle.as_ref().map_or(false, |h| h.is_finished())
     }
 
     /// Join the finished worker thread and move the result into `completed`.
