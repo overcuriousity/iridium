@@ -79,6 +79,12 @@ pub enum ProgressEvent {
     Completed { result: AcquireResult },
     /// Emitted when the pipeline is stopped by the cancel flag.
     Cancelled { bytes_done: u64 },
+    /// Emitted when a recovery pass begins.
+    ///
+    /// `pass` is one of `"forward"`, `"trim"`, `"scrape"`, or `"hash"`.
+    RecoveryPassStarted { pass: String },
+    /// Emitted after each chunk during recovery passes.
+    RecoveryProgress { pass: String, finished_bytes: u64, bad_bytes: u64 },
 }
 
 /// Outcome of a completed (or cancelled) acquisition.
@@ -151,7 +157,7 @@ pub enum AcquireError {
 
 /// Validate fields that would otherwise only fail deep inside the pipeline or
 /// after an output file has already been created.
-pub(crate) fn validate_job(job: &AcquireJob) -> Result<(), AcquireError> {
+pub fn validate_job(job: &AcquireJob) -> Result<(), AcquireError> {
     if job.algorithms.is_empty() {
         return Err(AcquireError::NoAlgorithms);
     }

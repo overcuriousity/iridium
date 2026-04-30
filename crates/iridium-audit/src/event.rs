@@ -85,4 +85,54 @@ pub enum AuditEvent {
         #[serde(with = "time::serde::rfc3339")]
         ts: OffsetDateTime,
     },
+
+    // ── Recovery-mode events (Phase 6) ────────────────────────────────────────
+
+    /// Emitted once at the start of a recovery run.
+    RecoveryStarted {
+        #[serde(with = "time::serde::rfc3339")]
+        ts: OffsetDateTime,
+        iridium_version: String,
+        argv: Vec<String>,
+        job: JobMetadata,
+        mapfile_path: std::path::PathBuf,
+    },
+    /// Emitted when a recovery pass begins.
+    ///
+    /// `pass` is one of `"forward"`, `"trim"`, `"scrape"`, or `"hash"`.
+    RecoveryPassStarted {
+        #[serde(with = "time::serde::rfc3339")]
+        ts: OffsetDateTime,
+        pass: String,
+    },
+    /// Emitted for each sector that could not be read during recovery.
+    ///
+    /// `map_status` is the ddrescue status character assigned after the
+    /// failure: `"*"` (non-trimmed), `"/"` (non-scraped), or `"-"` (bad-sector).
+    RecoveryReadError {
+        #[serde(with = "time::serde::rfc3339")]
+        ts: OffsetDateTime,
+        offset: u64,
+        length: u64,
+        error: String,
+        map_status: String,
+    },
+    /// Emitted after each atomic mapfile rewrite.
+    MapfileFlushed {
+        #[serde(with = "time::serde::rfc3339")]
+        ts: OffsetDateTime,
+        mapfile_path: std::path::PathBuf,
+        finished_bytes: u64,
+        bad_bytes: u64,
+    },
+    /// Emitted after the hash pass completes (or immediately before sealing
+    /// when the run was cancelled before hashing).
+    RecoveryCompleted {
+        #[serde(with = "time::serde::rfc3339")]
+        ts: OffsetDateTime,
+        total_bytes: u64,
+        finished_bytes: u64,
+        bad_bytes: u64,
+        digests: Vec<DigestRecord>,
+    },
 }
