@@ -87,6 +87,9 @@ pub struct MapState {
     start_time: OffsetDateTime,
     iridium_version: String,
     argv: Vec<String>,
+    /// Cached totals updated by every `mark()` call so callers are O(1).
+    finished_bytes_cache: u64,
+    bad_bytes_cache: u64,
 }
 
 impl MapState {
@@ -110,25 +113,19 @@ impl MapState {
             start_time: OffsetDateTime::now_utc(),
             iridium_version,
             argv,
+            finished_bytes_cache: 0,
+            bad_bytes_cache: 0,
         }
     }
 
     // ── Query helpers ─────────────────────────────────────────────────────────
 
     pub fn finished_bytes(&self) -> u64 {
-        self.regions
-            .iter()
-            .filter(|r| r.status == Status::Finished)
-            .map(|r| r.size)
-            .sum()
+        self.finished_bytes_cache
     }
 
     pub fn bad_bytes(&self) -> u64 {
-        self.regions
-            .iter()
-            .filter(|r| r.status == Status::BadSector)
-            .map(|r| r.size)
-            .sum()
+        self.bad_bytes_cache
     }
 
     /// Returns `true` if any region has the given `status`.
@@ -166,6 +163,7 @@ impl MapState {
             r.status = status;
         }
         self.merge_adjacent();
+        self.refresh_counters();
     }
 
     // ── Mapfile I/O ───────────────────────────────────────────────────────────
@@ -192,6 +190,21 @@ impl MapState {
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    fn refresh_counters(&mut self) {
+        self.finished_bytes_cache = self
+            .regions
+            .iter()
+            .filter(|r| r.status == Status::Finished)
+            .map(|r| r.size)
+            .sum();
+        self.bad_bytes_cache = self
+            .regions
+            .iter()
+            .filter(|r| r.status == Status::BadSector)
+            .map(|r| r.size)
+            .sum();
+    }
 
     fn split_at(&mut self, at: u64) {
         for i in 0..self.regions.len() {

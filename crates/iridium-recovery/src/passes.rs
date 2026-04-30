@@ -26,7 +26,7 @@ pub trait BlockReader: Send {
 impl BlockReader for iridium_device::DeviceReader {
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, io::Error> {
         iridium_device::DeviceReader::read_at(self, offset, buf)
-            .map_err(|e| io::Error::other(e.to_string()))
+            .map_err(io::Error::other)
     }
 
     fn size_bytes(&self) -> u64 {
@@ -66,7 +66,32 @@ pub fn forward_pass(
         let len = chunk.min((total - offset) as usize);
 
         match reader.read_at(offset, &mut buf[..len]) {
-            Ok(0) => break,
+            Ok(0) => {
+                // A zero-length read before reaching `total` is unexpected EOF.
+                // Treat it like a read error so the region is marked NonTrimmed
+                // and retried in the trim/scrape passes rather than silently
+                // left as NonTried and included as zero-filled data.
+                let e = io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    format!("unexpected EOF at offset {offset}: got 0 bytes, expected up to {len}"),
+                );
+                buf[..len].fill(0);
+                file.write_at(offset, &buf[..len])
+                    .map_err(|e| RecoveryError::Write {
+                        path: file.path().to_owned(),
+                        source: e,
+                    })?;
+                map.mark(offset, len as u64, Status::NonTrimmed);
+                map.current_status = Status::NonTrimmed;
+                emit_audit(job, || AuditEvent::RecoveryReadError {
+                    ts: OffsetDateTime::now_utc(),
+                    offset,
+                    length: len as u64,
+                    error: e.to_string(),
+                    map_status: Status::NonTrimmed.as_str().to_owned(),
+                });
+                offset += len as u64;
+            }
             Ok(n) => {
                 file.write_at(offset, &buf[..n])
                     .map_err(|e| RecoveryError::Write {

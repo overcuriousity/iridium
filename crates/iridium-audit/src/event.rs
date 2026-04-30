@@ -108,8 +108,8 @@ pub enum AuditEvent {
     ///
     /// The granularity is chunk-sized in the forward pass and sector-sized in
     /// the scrape pass.  `map_status` is the ddrescue status character assigned
-    /// after the failure: `"*"` (non-trimmed), `"/"` (non-scraped), or
-    /// `"-"` (bad-sector).
+    /// after the failure: `"*"` (non-trimmed, from the forward pass) or
+    /// `"-"` (bad-sector, from the scrape pass).
     RecoveryReadError {
         #[serde(with = "time::serde::rfc3339")]
         ts: OffsetDateTime,
