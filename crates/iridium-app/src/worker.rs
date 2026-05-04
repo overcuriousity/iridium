@@ -32,7 +32,7 @@ pub fn start_next(state: &mut AppState, egui_ctx: &egui::Context) {
     let handle = std::thread::spawn(move || run_job(worker_spec, worker_cancel, progress_tx, ctx));
 
     // Point the audit dock at the log file this job will write.
-    state.audit_path = Some(spec.dest_path.with_extension("jsonl"));
+    state.audit_path = Some(audit_path_for(&spec));
 
     state.active = Some(ActiveJob {
         spec,
@@ -53,7 +53,7 @@ fn run_job(
     egui_ctx: egui::Context,
 ) -> Result<JobOutcome, AppError> {
     // Build the audit log for this job.
-    let audit_path = spec.dest_path.with_extension("jsonl");
+    let audit_path = audit_path_for(&spec);
     let audit = match iridium_audit::Log::open(&audit_path) {
         Ok(log) => Some(Arc::new(log)),
         Err(e) => {
@@ -147,11 +147,6 @@ fn run_recovery_job(
     progress_tx: Sender<ProgressEvent>,
     audit: Option<Arc<iridium_audit::Log>>,
 ) -> Result<JobOutcome, AppError> {
-    // Seed total_bytes so the progress bar and ETA work from the first event.
-    let _ = progress_tx.send(ProgressEvent::Started {
-        total_bytes: spec.source.size_bytes,
-    });
-
     let mut job = AcquireJob::new(
         spec.source.clone(),
         spec.dest_path.clone(),
@@ -199,26 +194,88 @@ fn run_recovery_job(
 }
 
 fn seal_audit(audit: Option<Arc<iridium_audit::Log>>) {
-    if let Some(arc) = audit
-        && let Ok(log) = Arc::try_unwrap(arc)
-        && let Err(e) = log.seal()
-    {
-        log::warn!("audit seal failed: {e}");
+    let Some(arc) = audit else { return };
+    match Arc::into_inner(arc) {
+        Some(log) => {
+            if let Err(e) = log.seal() {
+                log::warn!("audit seal failed: {e}");
+            }
+        }
+        None => {
+            // Another clone outlived the worker — should not happen with the
+            // current pipeline contract (pipeline drops its `job.audit` before
+            // returning). Log so a regression here is visible.
+            log::warn!("audit seal skipped: outstanding Arc references prevent unwrap");
+        }
     }
 }
 
-/// The actual file written on disk (with extension).
-fn image_file_path(spec: &JobSpec) -> PathBuf {
+/// JSONL audit log path for a job (sibling of dest_path).
+fn audit_path_for(spec: &JobSpec) -> PathBuf {
+    spec.dest_path.with_extension("jsonl")
+}
+
+/// The actual file written on disk (with extension). Must mirror what
+/// `iridium_acquire::writer::RawWriter::create` and the EWF writer produce.
+pub(crate) fn image_file_path(spec: &JobSpec) -> PathBuf {
     match spec.format {
-        ImageFormat::Ewf => spec.dest_path.clone(), // libewf appends .E01 internally
-        _ => {
-            let mut p = spec.dest_path.clone();
-            let name = p
-                .file_name()
-                .map(|n| format!("{}.img", n.to_string_lossy()))
-                .unwrap_or_else(|| "image.img".into());
-            p.set_file_name(name);
-            p
+        // libewf appends `.E01` to `dest_path` (which has no extension).
+        ImageFormat::Ewf => spec.dest_path.with_extension("E01"),
+        // RawWriter does `dest_path.with_extension("img")`; mirror that exactly.
+        _ => spec.dest_path.with_extension("img"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use iridium_core::{HashAlg, ImageFormat};
+    use iridium_device::Disk;
+
+    use super::*;
+
+    fn spec_with(dest: &str, format: ImageFormat) -> JobSpec {
+        JobSpec {
+            source: Disk {
+                path: PathBuf::from("/dev/loop0"),
+                model: String::new(),
+                serial: String::new(),
+                size_bytes: 0,
+                logical_sector_size: 512,
+                sector_size: 512,
+                hpa_size_bytes: None,
+                dco_restricted: false,
+                removable: false,
+                rotational: false,
+                read_only: true,
+                partition_of: None,
+            },
+            dest_path: PathBuf::from(dest),
+            format,
+            algorithms: vec![HashAlg::Sha256],
+            chunk_size: 1024 * 1024,
+            recovery_mode: false,
+            mapfile_path: None,
+            verify_after: false,
         }
+    }
+
+    #[test]
+    fn raw_image_path_appends_img() {
+        let s = spec_with("/case/evidence/image", ImageFormat::Raw);
+        assert_eq!(image_file_path(&s), PathBuf::from("/case/evidence/image.img"));
+    }
+
+    #[test]
+    fn ewf_image_path_appends_e01() {
+        let s = spec_with("/case/evidence/image", ImageFormat::Ewf);
+        assert_eq!(image_file_path(&s), PathBuf::from("/case/evidence/image.E01"));
+    }
+
+    #[test]
+    fn audit_path_replaces_extension() {
+        let s = spec_with("/case/evidence/image", ImageFormat::Raw);
+        assert_eq!(audit_path_for(&s), PathBuf::from("/case/evidence/image.jsonl"));
     }
 }

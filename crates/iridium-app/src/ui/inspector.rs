@@ -373,7 +373,10 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
                     ChunkUnit::Kib => (kib, "KiB"),
                     ChunkUnit::Mib => (mib, "MiB"),
                 };
-                let mut display_val = (spec.chunk_size / divisor).max(1) as u32;
+                // Round to nearest unit so a chunk_size of 1.5 MiB shown as KiB
+                // (1536) and switched back to MiB does not snap silently to 1.
+                let mut display_val =
+                    ((spec.chunk_size as f64 / divisor as f64).round() as u32).max(1);
                 if ui
                     .add(
                         egui::DragValue::new(&mut display_val)

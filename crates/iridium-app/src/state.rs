@@ -345,7 +345,10 @@ impl AppState {
     fn refresh_audit_if_changed(&mut self) {
         let Some(path) = &self.audit_path else { return };
         let current_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-        if current_size <= self.audit_file_size {
+        // Re-read on size *change* (not just growth), so a truncation/rotation
+        // (rare today, but possible if logs are ever rotated externally) does
+        // not leave the dock pinned to stale lines.
+        if current_size == self.audit_file_size {
             return;
         }
         self.audit_file_size = current_size;
@@ -376,7 +379,7 @@ fn window_rate(samples: &VecDeque<(Instant, u64)>, window_secs: u64) -> f64 {
     last.1.saturating_sub(first.1) as f64 / dt
 }
 
-fn tail_file(path: &PathBuf, max_lines: usize) -> Vec<String> {
+fn tail_file(path: &std::path::Path, max_lines: usize) -> Vec<String> {
     let Ok(content) = std::fs::read_to_string(path) else {
         return vec![];
     };

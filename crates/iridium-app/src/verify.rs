@@ -1,6 +1,6 @@
 // Post-acquire hash-verification pass.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use iridium_core::{HashAlg, ImageFormat};
 use iridium_hash::{Digest, new_hasher};
@@ -9,8 +9,10 @@ use crate::error::VerifyError;
 
 const VERIFY_CHUNK: usize = 1024 * 1024; // 1 MiB
 
+/// `image_path` is the actual on-disk file: `<dest>.img` for Raw, `<dest>.E01`
+/// for EWF.
 pub fn verify_image(
-    image_path: &PathBuf,
+    image_path: &Path,
     format: ImageFormat,
     algorithms: &[HashAlg],
     expected: &[Digest],
@@ -26,7 +28,7 @@ pub fn verify_image(
 }
 
 fn verify_raw(
-    path: &PathBuf,
+    path: &Path,
     algorithms: &[HashAlg],
     expected: &[Digest],
     mut progress_cb: impl FnMut(u64, u64),
@@ -54,22 +56,13 @@ fn verify_raw(
 }
 
 fn verify_ewf(
-    dest_path: &Path,
+    ewf_path: &Path,
     algorithms: &[HashAlg],
     expected: &[Digest],
     mut progress_cb: impl FnMut(u64, u64),
 ) -> Result<(), VerifyError> {
-    // The dest_path for EWF is without extension; libewf wrote "<dest>.E01".
-    let ewf_path = {
-        let name = dest_path
-            .file_name()
-            .map(|n| format!("{}.E01", n.to_string_lossy()))
-            .unwrap_or_else(|| "image.E01".into());
-        dest_path.with_file_name(name)
-    };
-
     let mut handle = iridium_ewf::EwfHandle::new()?;
-    handle.open_read(&[ewf_path.as_path()])?;
+    handle.open_read(&[ewf_path])?;
     let total = handle.media_size()?;
     let mut hashers: Vec<_> = algorithms.iter().map(|a| new_hasher(*a)).collect();
     let mut buf = vec![0u8; VERIFY_CHUNK];
@@ -110,6 +103,8 @@ fn check_digests(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use iridium_core::HashAlg;
     use iridium_hash::{Digest, new_hasher};
 

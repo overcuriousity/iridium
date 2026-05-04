@@ -120,11 +120,19 @@ impl eframe::App for IridiumApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        if let Some(active) = &self.state.active {
+        // Persist config first so a hung worker thread cannot prevent it.
+        let _ = config::save(&self.state.config);
+
+        // Cancel and join the active worker so libewf finalizes / closes the
+        // segment cleanly before the process exits. Without this the EWF
+        // writer's drop guard can run mid-flush and leave a truncated .E01.
+        if let Some(mut active) = self.state.active.take() {
             active
                 .cancel
                 .store(true, std::sync::atomic::Ordering::Relaxed);
+            if let Some(handle) = active.handle.take() {
+                let _ = handle.join();
+            }
         }
-        let _ = config::save(&self.state.config);
     }
 }
