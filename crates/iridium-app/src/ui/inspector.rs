@@ -256,14 +256,23 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
                 let initial_dir = spec.source.path.parent().map(|p| p.to_path_buf());
                 let current_dest_path = spec.dest_path.clone();
                 std::thread::spawn(move || {
-                    let mut dialog =
-                        rfd::FileDialog::new().set_title("Select output location (no extension)");
-                    if let Some(dir) = initial_dir {
-                        dialog = dialog.set_directory(dir);
-                    }
-                    // Always write back so the main thread can reset file_dialog_open.
-                    // On cancel, keep the existing path unchanged.
-                    let chosen = dialog.save_file().unwrap_or(current_dest_path);
+                    // rfd with xdg-portal+tokio features requires a Tokio reactor.
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("tokio rt");
+                    let chosen = rt.block_on(async {
+                        let mut dialog = rfd::AsyncFileDialog::new()
+                            .set_title("Select output location (no extension)");
+                        if let Some(dir) = initial_dir {
+                            dialog = dialog.set_directory(dir);
+                        }
+                        dialog
+                            .save_file()
+                            .await
+                            .map(|fh| fh.path().to_path_buf())
+                            .unwrap_or(current_dest_path)
+                    });
                     *slot.lock().unwrap() = Some(chosen);
                     ctx.request_repaint();
                 });
