@@ -19,8 +19,14 @@ iridium-audit    = { path = "../iridium-audit" }
 iridium-recovery = { path = "../iridium-recovery" }
 iridium-hash     = { path = "../iridium-hash" }
 iridium-ewf      = { path = "../iridium-ewf" }
-egui.workspace   = true
-eframe.workspace = true
+egui.workspace        = true
+eframe.workspace      = true
+egui_extras.workspace = true
+egui_plot.workspace   = true
+egui-phosphor.workspace = true
+rfd.workspace         = true
+serde_json.workspace  = true
+libc.workspace        = true
 crossbeam-channel.workspace = true
 thiserror.workspace = true
 serde.workspace  = true

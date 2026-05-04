@@ -40,6 +40,9 @@ pub fn start_next(state: &mut AppState, egui_ctx: &egui::Context) {
         progress_rx,
         handle: Some(handle),
         progress: ProgressSnapshot::default(),
+        throughput_samples: std::collections::VecDeque::new(),
+        ewma_bps: 0.0,
+        started_at: std::time::Instant::now(),
     });
 }
 

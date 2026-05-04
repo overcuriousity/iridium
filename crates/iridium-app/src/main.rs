@@ -12,8 +12,8 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("iridium — forensic disk imaging")
-            .with_inner_size([cfg.window_width, cfg.window_height])
-            .with_min_inner_size([800.0, 600.0]),
+            .with_inner_size([cfg.window_width.max(1100.0), cfg.window_height.max(700.0)])
+            .with_min_inner_size([900.0, 600.0]),
         ..Default::default()
     };
 

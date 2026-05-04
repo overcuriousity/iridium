@@ -1,8 +1,9 @@
 use std::{
     collections::VecDeque,
     path::PathBuf,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{Arc, Mutex, atomic::AtomicBool},
     thread::JoinHandle,
+    time::Instant,
 };
 
 use crossbeam_channel::Receiver;
@@ -16,34 +17,27 @@ use crate::{config::Config, error::AppError};
 
 // ── Job specification ─────────────────────────────────────────────────────────
 
-/// All user-supplied parameters for one imaging job.
 #[derive(Debug, Clone)]
 pub struct JobSpec {
     pub source: Disk,
-    /// Destination path without extension.
     pub dest_path: PathBuf,
     pub format: ImageFormat,
     pub algorithms: Vec<HashAlg>,
     pub chunk_size: usize,
-    /// When true, run `iridium_recovery::run_recovery` instead of the normal pipeline.
     pub recovery_mode: bool,
     pub mapfile_path: Option<PathBuf>,
-    /// When true, run a verify pass after a successful acquire.
     pub verify_after: bool,
 }
 
 // ── Active job ────────────────────────────────────────────────────────────────
 
-/// Snapshot of progress for the currently running job.
 #[derive(Debug, Default, Clone)]
 pub struct ProgressSnapshot {
     pub total_bytes: u64,
     pub bytes_done: u64,
     pub bad_chunks: u64,
-    /// Non-empty during recovery passes.
     pub recovery_pass: Option<&'static str>,
     pub recovery_bad_bytes: u64,
-    /// Bytes verified so far; non-zero only while `verifying` is true.
     pub verify_bytes_done: u64,
     pub verifying: bool,
 }
@@ -54,6 +48,12 @@ pub struct ActiveJob {
     pub progress_rx: Receiver<ProgressEvent>,
     pub handle: Option<JoinHandle<Result<JobOutcome, AppError>>>,
     pub progress: ProgressSnapshot,
+    /// Cumulative bytes_done samples for throughput sparkline. Each entry is
+    /// (sample_instant, cumulative_bytes_done). Capped at ~120 samples (≈60 s).
+    pub throughput_samples: VecDeque<(Instant, u64)>,
+    /// EWMA of instantaneous bytes/s. Used for ETA and status bar.
+    pub ewma_bps: f64,
+    pub started_at: Instant,
 }
 
 // ── Job outcome ───────────────────────────────────────────────────────────────
@@ -81,11 +81,90 @@ pub enum JobOutcome {
 pub struct CompletedJob {
     pub spec: JobSpec,
     pub outcome: Result<JobOutcome, AppError>,
+    pub finished_at: std::time::SystemTime,
+}
+
+// ── View state ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InspectorMode {
+    #[default]
+    DeviceDetail,
+    NewJob,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CentralTab {
+    Queue,
+    #[default]
+    Active,
+    Completed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DeviceCol {
+    #[default]
+    Path,
+    Model,
+    Serial,
+    Size,
+    Sector,
+    Type,
+    Flags,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct TableViewState {
+    pub sort_col: DeviceCol,
+    pub sort_asc: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum AuditLevel {
+    #[default]
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl AuditLevel {
+    pub fn label(self) -> &'static str {
+        match self {
+            AuditLevel::Debug => "DEBUG",
+            AuditLevel::Info => "INFO",
+            AuditLevel::Warn => "WARN",
+            AuditLevel::Error => "ERROR",
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct AuditFilter {
+    pub text: String,
+    pub min_level: AuditLevel,
+    pub follow_tail: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuditView {
+    pub ts: String,
+    pub level: AuditLevel,
+    pub event: String,
+    pub detail: String,
+}
+
+// ── Chunk-unit selector for job form ─────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ChunkUnit {
+    Kib,
+    #[default]
+    Mib,
 }
 
 // ── App state ─────────────────────────────────────────────────────────────────
 
-/// Central state owned by `eframe::App`.
 pub struct AppState {
     pub config: Config,
     pub devices: Vec<Disk>,
@@ -95,10 +174,24 @@ pub struct AppState {
     pub completed: Vec<CompletedJob>,
     pub audit_path: Option<PathBuf>,
     pub audit_lines: Vec<String>,
+    pub audit_views: Vec<AuditView>,
     pub show_audit: bool,
     pub show_job_form: bool,
     pub pending_job_form: Option<JobSpec>,
     pub selected_device_idx: Option<usize>,
+    // New view state
+    pub inspector_mode: InspectorMode,
+    pub central_tab: CentralTab,
+    pub device_table: TableViewState,
+    pub audit_filter: AuditFilter,
+    pub target_free_cache: Option<(PathBuf, u64, Instant)>,
+    /// Receives file path from background rfd dialog thread.
+    pub file_dialog_slot: Arc<Mutex<Option<PathBuf>>>,
+    pub file_dialog_open: bool,
+    /// Signals app.rs that the inspector's "Queue job" was clicked.
+    pub job_submit_requested: bool,
+    /// Chunk unit selector for the job form.
+    pub chunk_unit: ChunkUnit,
 }
 
 impl AppState {
@@ -116,10 +209,20 @@ impl AppState {
             completed: vec![],
             audit_path: None,
             audit_lines: vec![],
+            audit_views: vec![],
             show_audit: false,
             show_job_form: false,
             pending_job_form: None,
             selected_device_idx: None,
+            inspector_mode: InspectorMode::DeviceDetail,
+            central_tab: CentralTab::Active,
+            device_table: TableViewState { sort_col: DeviceCol::Path, sort_asc: true },
+            audit_filter: AuditFilter { text: String::new(), min_level: AuditLevel::Debug, follow_tail: true },
+            target_free_cache: None,
+            file_dialog_slot: Arc::new(Mutex::new(None)),
+            file_dialog_open: false,
+            job_submit_requested: false,
+            chunk_unit: ChunkUnit::Mib,
         }
     }
 
@@ -129,6 +232,7 @@ impl AppState {
                 self.devices = d;
                 self.device_error = None;
                 self.selected_device_idx = None;
+                self.device_table = TableViewState::default();
             }
             Err(e) => {
                 self.device_error = Some(e.to_string());
@@ -136,8 +240,8 @@ impl AppState {
         }
     }
 
-    /// Drain the progress channel and update `active.progress`.
-    /// Returns `true` when the worker thread has fully exited (including any verify pass).
+    /// Drain the progress channel and update `active.progress` and throughput state.
+    /// Returns `true` when the worker thread has fully exited.
     pub fn poll_progress(&mut self) -> bool {
         let Some(active) = self.active.as_mut() else {
             return false;
@@ -151,6 +255,18 @@ impl AppState {
                     active.progress.bytes_done = bytes_done;
                     active.progress.bad_chunks = bad_chunks;
                     active.progress.recovery_pass = None;
+
+                    let now = Instant::now();
+                    active.throughput_samples.push_back((now, bytes_done));
+                    while let Some(&(t, _)) = active.throughput_samples.front() {
+                        if now.duration_since(t).as_secs() > 60 {
+                            active.throughput_samples.pop_front();
+                        } else {
+                            break;
+                        }
+                    }
+                    let inst_bps = window_rate(&active.throughput_samples, 2);
+                    active.ewma_bps = 0.2 * inst_bps + 0.8 * active.ewma_bps;
                 }
                 ProgressEvent::VerifyProgress { bytes_done, .. } => {
                     active.progress.verifying = true;
@@ -167,18 +283,15 @@ impl AppState {
                 _ => {}
             }
         }
-        // Refresh the audit tail on every poll so the dock stays live.
         if let Some(path) = &self.audit_path {
-            self.audit_lines = tail_file(path, 200);
+            let lines = tail_file(path, 400);
+            self.audit_views = parse_audit_views(&lines);
+            self.audit_lines = lines;
         }
 
-        // Use thread completion rather than a channel event so that a verify pass
-        // running after ProgressEvent::Completed doesn't cause a premature join.
         active.handle.as_ref().map_or(false, |h| h.is_finished())
     }
 
-    /// Join the finished worker thread and move the result into `completed`.
-    /// Starts the next pending job if any.
     pub fn collect_finished(&mut self, egui_ctx: &egui::Context) {
         let Some(mut active) = self.active.take() else {
             return;
@@ -190,17 +303,43 @@ impl AppState {
             .and_then(|h| h.join().ok())
             .unwrap_or_else(|| Err(AppError::Config("worker thread panicked".into())));
 
-        // tail audit log
         if let Some(path) = &self.audit_path {
-            self.audit_lines = tail_file(path, 200);
+            let lines = tail_file(path, 400);
+            self.audit_views = parse_audit_views(&lines);
+            self.audit_lines = lines;
         }
 
-        self.completed.push(CompletedJob { spec, outcome });
+        self.completed.push(CompletedJob {
+            spec,
+            outcome,
+            finished_at: std::time::SystemTime::now(),
+        });
+        self.central_tab = CentralTab::Completed;
 
         if !self.pending.is_empty() {
             crate::worker::start_next(self, egui_ctx);
         }
     }
+}
+
+/// Compute instantaneous bytes/s over the last `window_secs` of samples.
+fn window_rate(samples: &VecDeque<(Instant, u64)>, window_secs: u64) -> f64 {
+    if samples.len() < 2 {
+        return 0.0;
+    }
+    let now = Instant::now();
+    let cutoff = now - std::time::Duration::from_secs(window_secs);
+    let recent: Vec<_> = samples.iter().filter(|(t, _)| *t >= cutoff).collect();
+    if recent.len() < 2 {
+        return 0.0;
+    }
+    let first = recent.first().unwrap();
+    let last = recent.last().unwrap();
+    let dt = (last.0 - first.0).as_secs_f64();
+    if dt < 0.001 {
+        return 0.0;
+    }
+    last.1.saturating_sub(first.1) as f64 / dt
 }
 
 fn tail_file(path: &PathBuf, max_lines: usize) -> Vec<String> {
@@ -217,6 +356,82 @@ fn tail_file(path: &PathBuf, max_lines: usize) -> Vec<String> {
         .into_iter()
         .rev()
         .collect()
+}
+
+fn parse_audit_views(lines: &[String]) -> Vec<AuditView> {
+    lines
+        .iter()
+        .filter_map(|line| {
+            let v: serde_json::Value = serde_json::from_str(line).ok()?;
+            let event = v.get("event")?.as_str().unwrap_or("unknown").to_owned();
+            let ts = v
+                .get("ts")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_owned();
+            let level = match event.as_str() {
+                "read_error" | "recovery_read_error" => AuditLevel::Warn,
+                "cancelled" | "recovery_cancelled" => AuditLevel::Warn,
+                "start" | "recovery_started" | "completed" | "recovery_completed" | "sealed" => {
+                    AuditLevel::Info
+                }
+                _ => AuditLevel::Debug,
+            };
+            let detail = match event.as_str() {
+                "start" | "recovery_started" => v
+                    .get("job")
+                    .and_then(|j| j.get("source_path"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_owned(),
+                "completed" | "recovery_completed" => {
+                    let bytes = v
+                        .get("bytes_processed")
+                        .or_else(|| v.get("finished_bytes"))
+                        .and_then(|b| b.as_u64())
+                        .unwrap_or(0);
+                    format_bytes(bytes)
+                }
+                "read_error" | "recovery_read_error" => v
+                    .get("error")
+                    .and_then(|e| e.as_str())
+                    .unwrap_or("")
+                    .to_owned(),
+                _ => String::new(),
+            };
+            Some(AuditView { ts, level, event, detail })
+        })
+        .collect()
+}
+
+pub fn format_bytes(bytes: u64) -> String {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    const MIB: u64 = 1024 * 1024;
+    const KIB: u64 = 1024;
+    if bytes >= GIB {
+        format!("{:.2} GiB", bytes as f64 / GIB as f64)
+    } else if bytes >= MIB {
+        format!("{:.2} MiB", bytes as f64 / MIB as f64)
+    } else if bytes >= KIB {
+        format!("{:.2} KiB", bytes as f64 / KIB as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+pub fn format_duration(secs: f64) -> String {
+    if secs < 0.0 || secs.is_infinite() || secs.is_nan() {
+        return "—".to_owned();
+    }
+    let s = secs as u64;
+    let h = s / 3600;
+    let m = (s % 3600) / 60;
+    let sec = s % 60;
+    if h > 0 {
+        format!("{h}:{m:02}:{sec:02}")
+    } else {
+        format!("{m:02}:{sec:02}")
+    }
 }
 
 // ── Queue-transition tests ────────────────────────────────────────────────────
@@ -262,7 +477,6 @@ mod tests {
 
     #[test]
     fn new_state_starts_empty() {
-        // enumerate() may fail in test env — that's fine
         let state = AppState::new(Config::default());
         assert!(state.pending.is_empty());
         assert!(state.active.is_none());

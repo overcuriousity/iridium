@@ -1,47 +1,57 @@
+use std::time::Instant;
+
 use egui::Ui;
+use egui_plot::{Line, Plot, PlotPoints};
 
-use crate::state::{ActiveJob, CompletedJob, JobOutcome};
+use crate::state::{ActiveJob, format_bytes, format_duration};
 
-/// Shows the active job's live progress.
-/// Returns `true` if the Cancel button was clicked this frame.
-pub fn show_active(ui: &mut Ui, active: &ActiveJob) -> bool {
-    ui.heading("Active job");
-    ui.label(format!("Source: {}", active.spec.source.path.display()));
-    ui.label(format!("Output: {}", active.spec.dest_path.display()));
+use super::theme::{self, Palette, icons};
 
-    let p = &active.progress;
-    if p.total_bytes > 0 {
-        let frac = p.bytes_done as f32 / p.total_bytes as f32;
-        let label = format!(
-            "{} / {} ({:.1}%)",
-            format_bytes(p.bytes_done),
-            format_bytes(p.total_bytes),
-            frac * 100.0,
-        );
-        ui.add(egui::ProgressBar::new(frac).text(label));
-    } else {
-        ui.add(egui::ProgressBar::new(0.0).text("Waiting…").animate(true));
-    }
-
-    if p.bad_chunks > 0 {
-        ui.colored_label(
-            egui::Color32::from_rgb(255, 165, 0),
-            format!("Bad chunks (zero-filled): {}", p.bad_chunks),
-        );
-    }
-
-    if let Some(pass) = p.recovery_pass {
-        ui.label(format!("Recovery pass: {pass}"));
-        if p.bytes_done > 0 && p.total_bytes > 0 {
-            let frac = p.bytes_done as f32 / p.total_bytes as f32;
-            ui.add(egui::ProgressBar::new(frac).text(format!(
-                "Recovered: {} bad: {}",
-                format_bytes(p.bytes_done),
-                format_bytes(p.recovery_bad_bytes),
-            )));
+pub fn show_active_tab(ui: &mut Ui, state: &mut crate::state::AppState) {
+    if let Some(active) = &state.active {
+        // We need to split the borrow carefully: pass active immutably,
+        // handle cancel button response afterwards.
+        let cancelled = show_active_inner(ui, active);
+        if cancelled {
+            state.active.as_ref().unwrap().cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            ui.ctx().request_repaint();
         }
+    } else if !state.completed.is_empty() {
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("No active job. See the Completed tab.")
+                .color(Palette::TEXT_DIM),
+        );
+    } else {
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("No job running. Select a device and click Image…")
+                .color(Palette::TEXT_DIM),
+        );
     }
+}
 
+/// Returns true if Cancel was clicked.
+fn show_active_inner(ui: &mut Ui, active: &ActiveJob) -> bool {
+    let p = &active.progress;
+
+    // ── Header row ────────────────────────────────────────────────────────────
+    ui.horizontal(|ui| {
+        ui.add(egui::Label::new(
+            egui::RichText::new(format!(
+                "{} {} → {}",
+                icons::DEVICE_HDD,
+                active.spec.source.path.display(),
+                active.spec.dest_path.display(),
+            ))
+            .font(egui::FontId::monospace(12.0))
+            .color(Palette::TEXT_STRONG),
+        ).truncate());
+    });
+
+    ui.add_space(4.0);
+
+    // ── Progress bar ──────────────────────────────────────────────────────────
     if p.verifying {
         let frac = if p.total_bytes > 0 {
             p.verify_bytes_done as f32 / p.total_bytes as f32
@@ -51,85 +61,165 @@ pub fn show_active(ui: &mut Ui, active: &ActiveJob) -> bool {
         ui.add(
             egui::ProgressBar::new(frac)
                 .text(format!("Verifying: {:.1}%", frac * 100.0))
-                .animate(true),
+                .animate(true)
+                .fill(Palette::ACCENT),
+        );
+    } else if p.total_bytes > 0 {
+        let frac = p.bytes_done as f32 / p.total_bytes as f32;
+        ui.add(
+            egui::ProgressBar::new(frac)
+                .text(format!("{:.1}%", frac * 100.0))
+                .fill(Palette::ACCENT),
+        );
+    } else {
+        ui.add(
+            egui::ProgressBar::new(0.0)
+                .text("Starting…")
+                .animate(true)
+                .fill(Palette::ACCENT),
         );
     }
 
-    let cancelled = ui.button("Cancel").clicked();
-    if cancelled {
-        active.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-    cancelled
-}
+    ui.add_space(4.0);
 
-/// Shows a single completed job entry.
-pub fn show_completed(ui: &mut Ui, job: &CompletedJob) {
-    let header = format!("{} → {}", job.spec.source.path.display(), job.spec.dest_path.display());
-    egui::CollapsingHeader::new(&header)
-        .default_open(false)
-        .show(ui, |ui| match &job.outcome {
-            Err(e) => {
-                ui.colored_label(egui::Color32::RED, format!("Error: {e}"));
+    // ── Stats grid ────────────────────────────────────────────────────────────
+    let mbps = active.ewma_bps / 1_048_576.0;
+    let eta_secs = if active.ewma_bps > 1.0 && p.total_bytes > p.bytes_done {
+        (p.total_bytes - p.bytes_done) as f64 / active.ewma_bps
+    } else {
+        f64::INFINITY
+    };
+    let elapsed = active.started_at.elapsed().as_secs_f64();
+
+    egui::Grid::new("progress_stats")
+        .num_columns(4)
+        .spacing([16.0, 2.0])
+        .show(ui, |ui| {
+            // Labels row
+            for label in ["Bytes", "Throughput", "ETA", "Elapsed"] {
+                ui.label(egui::RichText::new(label).small().color(Palette::TEXT_DIM));
             }
-            Ok(JobOutcome::Cancelled { bytes_done }) => {
-                ui.colored_label(
-                    egui::Color32::YELLOW,
-                    format!("Cancelled after {}", format_bytes(*bytes_done)),
-                );
+            ui.end_row();
+            // Values row
+            ui.add(egui::Label::new(
+                egui::RichText::new(format!(
+                    "{} / {}",
+                    format_bytes(p.bytes_done),
+                    format_bytes(p.total_bytes)
+                ))
+                .font(egui::FontId::monospace(12.0))
+                .color(Palette::TEXT_STRONG),
+            ));
+            ui.add(egui::Label::new(
+                egui::RichText::new(format!("{mbps:.1} MB/s"))
+                    .font(egui::FontId::monospace(12.0))
+                    .color(if mbps > 0.1 { Palette::ACCENT } else { Palette::TEXT_DIM }),
+            ));
+            ui.add(egui::Label::new(
+                egui::RichText::new(format_duration(eta_secs))
+                    .font(egui::FontId::monospace(12.0))
+                    .color(Palette::TEXT_STRONG),
+            ));
+            ui.add(egui::Label::new(
+                egui::RichText::new(format_duration(elapsed))
+                    .font(egui::FontId::monospace(12.0))
+                    .color(Palette::TEXT_STRONG),
+            ));
+            ui.end_row();
+        });
+
+    ui.add_space(4.0);
+
+    // ── Hash chips ────────────────────────────────────────────────────────────
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(icons::HASH).color(Palette::TEXT_DIM));
+        for alg in &active.spec.algorithms {
+            let label = match alg {
+                iridium_core::HashAlg::Md5 => "MD5",
+                iridium_core::HashAlg::Sha1 => "SHA-1",
+                iridium_core::HashAlg::Sha256 => "SHA-256",
+            };
+            if p.verifying || p.bytes_done == p.total_bytes {
+                theme::chip_success(ui, label);
+            } else if p.bytes_done > 0 {
+                theme::chip_info(ui, label);
+            } else {
+                theme::chip(ui, label, Palette::TEXT_DIM, Palette::SURFACE_ALT);
             }
-            Ok(JobOutcome::Completed { digests, bytes_processed, bad_chunks, verified }) => {
-                ui.colored_label(egui::Color32::GREEN, "Completed");
-                ui.label(format!("Bytes imaged: {}", format_bytes(*bytes_processed)));
-                if *bad_chunks > 0 {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(255, 165, 0),
-                        format!("Bad chunks: {bad_chunks}"),
+        }
+        if p.bad_chunks > 0 {
+            ui.add_space(4.0);
+            theme::chip_warn(ui, &format!("{} bad chunks", p.bad_chunks));
+        }
+    });
+
+    ui.add_space(4.0);
+
+    // ── Throughput sparkline ──────────────────────────────────────────────────
+    if active.throughput_samples.len() >= 2 {
+        let job_start = active.started_at;
+        let samples: Vec<_> = active.throughput_samples.iter().collect();
+        let points: Vec<[f64; 2]> = samples
+            .windows(2)
+            .map(|w| {
+                let dt = w[1].0.duration_since(w[0].0).as_secs_f64().max(0.001);
+                let bytes = w[1].1.saturating_sub(w[0].1);
+                let mbps = bytes as f64 / dt / 1_048_576.0;
+                let t = w[1].0.duration_since(job_start).as_secs_f64();
+                [t, mbps]
+            })
+            .collect();
+
+        if !points.is_empty() {
+            Plot::new("throughput_plot")
+                .height(55.0)
+                .allow_zoom(false)
+                .allow_drag(false)
+                .allow_scroll(false)
+                .show_axes([false, true])
+                .show_grid([false, true])
+                .label_formatter(|_, v| format!("{:.1} MB/s", v.y))
+                .show(ui, |plot_ui| {
+                    plot_ui.line(
+                        Line::new("MB/s", PlotPoints::new(points))
+                            .color(Palette::ACCENT),
                     );
-                }
-                for d in digests {
-                    ui.monospace(format!("{:?}: {}", d.algorithm, d.hex));
-                }
-                if *verified {
-                    ui.colored_label(egui::Color32::GREEN, "Verified ✓");
-                }
-            }
-            Ok(JobOutcome::Recovery { result, verified }) => {
-                let color = if result.complete {
-                    egui::Color32::GREEN
-                } else {
-                    egui::Color32::YELLOW
-                };
-                ui.colored_label(
-                    color,
-                    if result.complete { "Recovery complete" } else { "Recovery cancelled" },
+                });
+        }
+    }
+
+    // ── Recovery passes ───────────────────────────────────────────────────────
+    if let Some(pass) = p.recovery_pass {
+        ui.collapsing("Recovery passes", |ui| {
+            if p.total_bytes > 0 {
+                let frac = p.bytes_done as f32 / p.total_bytes as f32;
+                ui.label(egui::RichText::new(format!("Pass: {pass}")).small().color(Palette::TEXT_DIM));
+                ui.add(
+                    egui::ProgressBar::new(frac)
+                        .desired_height(8.0)
+                        .text(format!(
+                            "Done: {}  Bad: {}",
+                            format_bytes(p.bytes_done),
+                            format_bytes(p.recovery_bad_bytes),
+                        )),
                 );
-                ui.label(format!(
-                    "Finished: {}  Bad: {}",
-                    format_bytes(result.finished_bytes),
-                    format_bytes(result.bad_bytes),
-                ));
-                ui.label(format!("Mapfile: {}", result.mapfile_path.display()));
-                for d in &result.digests {
-                    ui.monospace(format!("{:?}: {}", d.algorithm, d.hex));
-                }
-                if *verified {
-                    ui.colored_label(egui::Color32::GREEN, "Verified ✓");
-                }
             }
         });
-}
-
-fn format_bytes(bytes: u64) -> String {
-    const GIB: u64 = 1024 * 1024 * 1024;
-    const MIB: u64 = 1024 * 1024;
-    const KIB: u64 = 1024;
-    if bytes >= GIB {
-        format!("{:.2} GiB", bytes as f64 / GIB as f64)
-    } else if bytes >= MIB {
-        format!("{:.2} MiB", bytes as f64 / MIB as f64)
-    } else if bytes >= KIB {
-        format!("{:.2} KiB", bytes as f64 / KIB as f64)
-    } else {
-        format!("{bytes} B")
     }
+
+    ui.add_space(6.0);
+
+    // ── Cancel button (right-aligned) ─────────────────────────────────────────
+    let mut cancelled = false;
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+        let btn = egui::Button::new(
+            egui::RichText::new(format!("{} Cancel", icons::CANCEL)).color(Palette::DANGER),
+        )
+        .stroke(egui::Stroke::new(1.0, Palette::DANGER))
+        .fill(Palette::SURFACE);
+        if ui.add(btn).clicked() {
+            cancelled = true;
+        }
+    });
+    cancelled
 }

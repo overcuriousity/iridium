@@ -7,7 +7,8 @@ pub struct IridiumApp {
 }
 
 impl IridiumApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        ui::theme::apply(&cc.egui_ctx);
         let cfg = config::load();
         Self {
             state: AppState::new(cfg),
@@ -17,18 +18,46 @@ impl IridiumApp {
 
 impl eframe::App for IridiumApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Poll progress from worker thread.
+        // ── Progress polling ──────────────────────────────────────────────────
         let finished = self.state.poll_progress();
         if finished {
             self.state.collect_finished(ctx);
         }
-
-        // Keep repainting while a job is running.
         if self.state.active.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
 
-        // Top menu bar
+        // ── File dialog result ────────────────────────────────────────────────
+        if let Ok(mut guard) = self.state.file_dialog_slot.try_lock() {
+            if let Some(path) = guard.take() {
+                self.state.file_dialog_open = false;
+                if let Some(spec) = self.state.pending_job_form.as_mut() {
+                    spec.dest_path = path;
+                }
+            }
+        }
+
+        // ── Job submit ────────────────────────────────────────────────────────
+        if self.state.job_submit_requested {
+            self.state.job_submit_requested = false;
+            if let Some(spec) = self.state.pending_job_form.take() {
+                if let Some(parent) = spec.dest_path.parent() {
+                    self.state.config.last_output_dir = Some(parent.to_path_buf());
+                    let _ = config::save(&self.state.config);
+                }
+                self.state.pending.push_back(spec);
+                self.state.show_job_form = false;
+                self.state.inspector_mode = crate::state::InspectorMode::DeviceDetail;
+                if self.state.active.is_none() {
+                    crate::worker::start_next(&mut self.state, ctx);
+                    self.state.central_tab = crate::state::CentralTab::Active;
+                } else {
+                    self.state.central_tab = crate::state::CentralTab::Queue;
+                }
+            }
+        }
+
+        // ── Top menu bar ──────────────────────────────────────────────────────
         egui::TopBottomPanel::top("menubar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
@@ -42,33 +71,46 @@ impl eframe::App for IridiumApp {
             });
         });
 
-        // Audit log dock at bottom
+        // ── Status bar (absolute bottom) ──────────────────────────────────────
+        egui::TopBottomPanel::bottom("status_bar")
+            .exact_height(22.0)
+            .show(ctx, |ui| {
+                ui::status_bar::show(ui, &mut self.state);
+            });
+
+        // ── Audit dock (above status bar) ─────────────────────────────────────
         if self.state.show_audit {
             egui::TopBottomPanel::bottom("audit_panel")
                 .resizable(true)
                 .min_height(80.0)
+                .default_height(140.0)
                 .show(ctx, |ui| {
                     ui::audit::show(ui, &mut self.state);
                 });
         }
 
-        // Left panel: device list
+        // ── Left panel: device list ───────────────────────────────────────────
         egui::SidePanel::left("devices_panel")
             .resizable(true)
-            .min_width(260.0)
+            .min_width(240.0)
+            .default_width(300.0)
             .show(ctx, |ui| {
                 ui::devices::show(ui, &mut self.state);
             });
 
-        // Central panel: queue + progress
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui::queue::show(ui, &mut self.state);
-        });
+        // ── Right panel: inspector (device detail / job wizard) ───────────────
+        egui::SidePanel::right("inspector_panel")
+            .resizable(true)
+            .min_width(280.0)
+            .default_width(340.0)
+            .show(ctx, |ui| {
+                ui::inspector::show(ui, &mut self.state);
+            });
 
-        // Job form modal window — rendered last so it floats above panels
-        if self.state.show_job_form {
-            ui::job_form::show(ctx, &mut self.state);
-        }
+        // ── Central panel: tabbed queue / active / completed ──────────────────
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui::central_tabs::show(ui, &mut self.state);
+        });
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
