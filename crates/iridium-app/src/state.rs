@@ -192,6 +192,10 @@ pub struct AppState {
     pub job_submit_requested: bool,
     /// Chunk unit selector for the job form.
     pub chunk_unit: ChunkUnit,
+    /// Which completed job is shown in the detail window (persists across frames).
+    pub completed_detail_idx: Option<usize>,
+    /// Last observed byte-size of the audit JSONL file; used to skip re-reads.
+    pub audit_file_size: u64,
 }
 
 impl AppState {
@@ -223,6 +227,8 @@ impl AppState {
             file_dialog_open: false,
             job_submit_requested: false,
             chunk_unit: ChunkUnit::Mib,
+            completed_detail_idx: None,
+            audit_file_size: 0,
         }
     }
 
@@ -243,53 +249,52 @@ impl AppState {
     /// Drain the progress channel and update `active.progress` and throughput state.
     /// Returns `true` when the worker thread has fully exited.
     pub fn poll_progress(&mut self) -> bool {
-        let Some(active) = self.active.as_mut() else {
-            return false;
-        };
-        for event in active.progress_rx.try_iter() {
-            match event {
-                ProgressEvent::Started { total_bytes } => {
-                    active.progress.total_bytes = total_bytes;
-                }
-                ProgressEvent::Chunk { bytes_done, bad_chunks } => {
-                    active.progress.bytes_done = bytes_done;
-                    active.progress.bad_chunks = bad_chunks;
-                    active.progress.recovery_pass = None;
-
-                    let now = Instant::now();
-                    active.throughput_samples.push_back((now, bytes_done));
-                    while let Some(&(t, _)) = active.throughput_samples.front() {
-                        if now.duration_since(t).as_secs() > 60 {
-                            active.throughput_samples.pop_front();
-                        } else {
-                            break;
-                        }
+        let finished = {
+            let Some(active) = self.active.as_mut() else {
+                return false;
+            };
+            for event in active.progress_rx.try_iter() {
+                match event {
+                    ProgressEvent::Started { total_bytes } => {
+                        active.progress.total_bytes = total_bytes;
                     }
-                    let inst_bps = window_rate(&active.throughput_samples, 2);
-                    active.ewma_bps = 0.2 * inst_bps + 0.8 * active.ewma_bps;
-                }
-                ProgressEvent::VerifyProgress { bytes_done, .. } => {
-                    active.progress.verifying = true;
-                    active.progress.verify_bytes_done = bytes_done;
-                }
-                ProgressEvent::RecoveryPassStarted { pass } => {
-                    active.progress.recovery_pass = Some(pass);
-                }
-                ProgressEvent::RecoveryProgress { pass, finished_bytes, bad_bytes } => {
-                    active.progress.recovery_pass = Some(pass);
-                    active.progress.bytes_done = finished_bytes;
-                    active.progress.recovery_bad_bytes = bad_bytes;
-                }
-                _ => {}
-            }
-        }
-        if let Some(path) = &self.audit_path {
-            let lines = tail_file(path, 400);
-            self.audit_views = parse_audit_views(&lines);
-            self.audit_lines = lines;
-        }
+                    ProgressEvent::Chunk { bytes_done, bad_chunks } => {
+                        active.progress.bytes_done = bytes_done;
+                        active.progress.bad_chunks = bad_chunks;
+                        active.progress.recovery_pass = None;
 
-        active.handle.as_ref().map_or(false, |h| h.is_finished())
+                        let now = Instant::now();
+                        active.throughput_samples.push_back((now, bytes_done));
+                        while let Some(&(t, _)) = active.throughput_samples.front() {
+                            if now.duration_since(t).as_secs() > 60 {
+                                active.throughput_samples.pop_front();
+                            } else {
+                                break;
+                            }
+                        }
+                        let inst_bps = window_rate(&active.throughput_samples, 2);
+                        active.ewma_bps = 0.2 * inst_bps + 0.8 * active.ewma_bps;
+                    }
+                    ProgressEvent::VerifyProgress { bytes_done, total_bytes, .. } => {
+                        active.progress.verifying = true;
+                        active.progress.total_bytes = total_bytes;
+                        active.progress.verify_bytes_done = bytes_done;
+                    }
+                    ProgressEvent::RecoveryPassStarted { pass } => {
+                        active.progress.recovery_pass = Some(pass);
+                    }
+                    ProgressEvent::RecoveryProgress { pass, finished_bytes, bad_bytes } => {
+                        active.progress.recovery_pass = Some(pass);
+                        active.progress.bytes_done = finished_bytes;
+                        active.progress.recovery_bad_bytes = bad_bytes;
+                    }
+                    _ => {}
+                }
+            }
+            active.handle.as_ref().map_or(false, |h| h.is_finished())
+        }; // release borrow on self.active before refresh
+        self.refresh_audit_if_changed();
+        finished
     }
 
     pub fn collect_finished(&mut self, egui_ctx: &egui::Context) {
@@ -303,11 +308,8 @@ impl AppState {
             .and_then(|h| h.join().ok())
             .unwrap_or_else(|| Err(AppError::Config("worker thread panicked".into())));
 
-        if let Some(path) = &self.audit_path {
-            let lines = tail_file(path, 400);
-            self.audit_views = parse_audit_views(&lines);
-            self.audit_lines = lines;
-        }
+        self.audit_file_size = 0; // force a re-read on job completion
+        self.refresh_audit_if_changed();
 
         self.completed.push(CompletedJob {
             spec,
@@ -319,6 +321,19 @@ impl AppState {
         if !self.pending.is_empty() {
             crate::worker::start_next(self, egui_ctx);
         }
+    }
+
+    fn refresh_audit_if_changed(&mut self) {
+        let Some(path) = &self.audit_path else { return };
+        let current_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        if current_size <= self.audit_file_size {
+            return;
+        }
+        self.audit_file_size = current_size;
+        let path = path.clone();
+        let lines = tail_file(&path, 400);
+        self.audit_views = parse_audit_views(&lines);
+        self.audit_lines = lines;
     }
 }
 

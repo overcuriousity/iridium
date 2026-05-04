@@ -18,6 +18,12 @@ impl IridiumApp {
 
 impl eframe::App for IridiumApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // ── Persist window size so on_exit saves the current dimensions ───────
+        if let Some(rect) = ctx.input(|i| i.viewport().inner_rect) {
+            self.state.config.window_width = rect.width();
+            self.state.config.window_height = rect.height();
+        }
+
         // ── Progress polling ──────────────────────────────────────────────────
         let finished = self.state.poll_progress();
         if finished {
@@ -114,6 +120,9 @@ impl eframe::App for IridiumApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(active) = &self.state.active {
+            active.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         let _ = config::save(&self.state.config);
     }
 }

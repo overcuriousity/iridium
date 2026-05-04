@@ -142,6 +142,9 @@ fn run_recovery_job(
     progress_tx: Sender<ProgressEvent>,
     audit: Option<Arc<iridium_audit::Log>>,
 ) -> Result<JobOutcome, AppError> {
+    // Seed total_bytes so the progress bar and ETA work from the first event.
+    let _ = progress_tx.send(ProgressEvent::Started { total_bytes: spec.source.size_bytes });
+
     let mut job = AcquireJob::new(
         spec.source.clone(),
         spec.dest_path.clone(),

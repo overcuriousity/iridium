@@ -239,15 +239,17 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
                 let slot = Arc::clone(&state.file_dialog_slot);
                 let ctx = ui.ctx().clone();
                 let initial_dir = spec.source.path.parent().map(|p| p.to_path_buf());
+                let current_dest_path = spec.dest_path.clone();
                 std::thread::spawn(move || {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Select output location (no extension)");
                     if let Some(dir) = initial_dir {
                         dialog = dialog.set_directory(dir);
                     }
-                    if let Some(path) = dialog.save_file() {
-                        *slot.lock().unwrap() = Some(path);
-                    }
+                    // Always write back so the main thread can reset file_dialog_open.
+                    // On cancel, keep the existing path unchanged.
+                    let chosen = dialog.save_file().unwrap_or(current_dest_path);
+                    *slot.lock().unwrap() = Some(chosen);
                     ctx.request_repaint();
                 });
             }
@@ -280,14 +282,24 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
 
             // ── Format ──────────────────────────────────────────────────────
             section_heading(ui, "FORMAT");
-            theme::segmented(
-                ui,
-                &mut spec.format,
-                &[
-                    ("Raw", ImageFormat::Raw),
-                    ("EWF/E01", ImageFormat::Ewf),
-                ],
-            );
+            if spec.recovery_mode {
+                // Recovery always writes raw output; override any stale selection.
+                spec.format = ImageFormat::Raw;
+                ui.label(
+                    egui::RichText::new("Raw (recovery always writes raw)")
+                        .small()
+                        .color(Palette::TEXT_DIM),
+                );
+            } else {
+                theme::segmented(
+                    ui,
+                    &mut spec.format,
+                    &[
+                        ("Raw", ImageFormat::Raw),
+                        ("EWF/E01", ImageFormat::Ewf),
+                    ],
+                );
+            }
 
             // ── Hashing ─────────────────────────────────────────────────────
             section_heading(ui, "HASHING");

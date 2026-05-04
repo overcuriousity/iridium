@@ -25,7 +25,6 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
     ui.add_space(4.0);
 
     let n = state.completed.len();
-    let mut expand_idx: Option<usize> = None;
 
     TableBuilder::new(ui)
         .striped(true)
@@ -81,23 +80,31 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                     });
                     row.col(|ui| {
                         result_chip(ui, job);
-                        // Expand on click for digest details
                         if ui.interact(ui.min_rect(), egui::Id::new(("completed_row", real_i)), egui::Sense::click()).double_clicked() {
-                            expand_idx = Some(real_i);
+                            state.completed_detail_idx = Some(real_i);
                         }
                     });
                 });
             }
         });
 
-    // Expanded detail for double-clicked row
-    if let Some(idx) = expand_idx {
-        egui::Window::new(format!("Job detail — {}", state.completed[idx].spec.source.path.display()))
-            .collapsible(false)
-            .resizable(true)
-            .show(ui.ctx(), |ui| {
-                show_job_detail(ui, &state.completed[idx]);
-            });
+    // Persistent detail window; stays open until the user closes it.
+    if let Some(idx) = state.completed_detail_idx {
+        if idx < state.completed.len() {
+            let mut open = true;
+            egui::Window::new(format!("Job detail — {}", state.completed[idx].spec.source.path.display()))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(true)
+                .show(ui.ctx(), |ui| {
+                    show_job_detail(ui, &state.completed[idx]);
+                });
+            if !open {
+                state.completed_detail_idx = None;
+            }
+        } else {
+            state.completed_detail_idx = None;
+        }
     }
 }
 
