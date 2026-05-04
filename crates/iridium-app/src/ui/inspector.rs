@@ -253,7 +253,7 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
                 state.file_dialog_open = true;
                 let slot = Arc::clone(&state.file_dialog_slot);
                 let ctx = ui.ctx().clone();
-                let initial_dir = spec.source.path.parent().map(|p| p.to_path_buf());
+                let initial_dir = spec.dest_path.parent().map(|p| p.to_path_buf());
                 let current_dest_path = spec.dest_path.clone();
                 std::thread::spawn(move || {
                     // rfd with xdg-portal+tokio features requires a Tokio reactor.
