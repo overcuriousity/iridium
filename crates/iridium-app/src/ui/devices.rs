@@ -106,7 +106,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                 ui.label(egui::RichText::new("Type").small().color(Palette::TEXT_DIM));
             });
             header.col(|ui| {
-                ui.label(egui::RichText::new("Flags").small().color(Palette::TEXT_DIM));
+                ui.label(
+                    egui::RichText::new("Flags")
+                        .small()
+                        .color(Palette::TEXT_DIM),
+                );
             });
         })
         .body(|body| {

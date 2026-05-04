@@ -268,8 +268,8 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
                         .build()
                         .expect("tokio rt");
                     let chosen = rt.block_on(async {
-                        let mut dialog = rfd::AsyncFileDialog::new()
-                            .set_title("Select output folder");
+                        let mut dialog =
+                            rfd::AsyncFileDialog::new().set_title("Select output folder");
                         if let Some(dir) = initial_dir {
                             dialog = dialog.set_directory(dir);
                         }
