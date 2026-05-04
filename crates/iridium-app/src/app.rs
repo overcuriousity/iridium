@@ -34,12 +34,12 @@ impl eframe::App for IridiumApp {
         }
 
         // ── File dialog result ────────────────────────────────────────────────
-        if let Ok(mut guard) = self.state.file_dialog_slot.try_lock() {
-            if let Some(path) = guard.take() {
-                self.state.file_dialog_open = false;
-                if let Some(spec) = self.state.pending_job_form.as_mut() {
-                    spec.dest_path = path;
-                }
+        if let Ok(mut guard) = self.state.file_dialog_slot.try_lock()
+            && let Some(path) = guard.take()
+        {
+            self.state.file_dialog_open = false;
+            if let Some(spec) = self.state.pending_job_form.as_mut() {
+                spec.dest_path = path;
             }
         }
 
@@ -121,7 +121,9 @@ impl eframe::App for IridiumApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if let Some(active) = &self.state.active {
-            active.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            active
+                .cancel
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
         let _ = config::save(&self.state.config);
     }

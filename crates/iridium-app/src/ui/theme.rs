@@ -29,15 +29,14 @@ impl Palette {
     // Text
     pub const TEXT_STRONG: Color32 = Color32::from_rgb(0x0D, 0x0F, 0x14);
     pub const TEXT_DIM: Color32 = Color32::from_rgb(0x5A, 0x64, 0x78);
+    #[allow(dead_code)]
     pub const TEXT_MONO: Color32 = Color32::from_rgb(0x1A, 0x28, 0x40);
 }
 
 // ── Phosphor icon shortcuts ───────────────────────────────────────────────────
 
 pub mod icons {
-    pub use egui_phosphor::regular::{
-        ARROW_DOWN, ARROW_UP, HARD_DRIVES, MAGNIFYING_GLASS, X,
-    };
+    pub use egui_phosphor::regular::{ARROW_DOWN, ARROW_UP, MAGNIFYING_GLASS, X};
 
     pub const DEVICE_HDD: &str = egui_phosphor::regular::HARD_DRIVES;
     pub const DEVICE_SSD: &str = egui_phosphor::regular::LIGHTNING;
@@ -112,7 +111,12 @@ pub fn chip(ui: &mut Ui, text: &str, fg: Color32, bg: Color32) {
     egui::Frame::new()
         .fill(bg)
         .corner_radius(3.0)
-        .inner_margin(Margin { left: 4, right: 4, top: 1, bottom: 1 })
+        .inner_margin(Margin {
+            left: 4,
+            right: 4,
+            top: 1,
+            bottom: 1,
+        })
         .show(ui, |ui| {
             ui.add(egui::Label::new(
                 RichText::new(text).color(fg).small().strong(),
@@ -149,9 +153,11 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, current: &mut T, options: &[(
             };
             let btn = egui::Button::new(rich).corner_radius(3.0);
             let btn = if selected {
-                btn.fill(Palette::ACCENT).stroke(egui::Stroke::new(1.0, Palette::ACCENT))
+                btn.fill(Palette::ACCENT)
+                    .stroke(egui::Stroke::new(1.0, Palette::ACCENT))
             } else {
-                btn.fill(Palette::SURFACE).stroke(egui::Stroke::new(1.0, Palette::SEPARATOR))
+                btn.fill(Palette::SURFACE)
+                    .stroke(egui::Stroke::new(1.0, Palette::SEPARATOR))
             };
             if ui.add(btn).clicked() {
                 *current = *value;
@@ -182,7 +188,14 @@ pub fn hash_chip(ui: &mut Ui, label: &str, enabled: &mut bool) {
     let btn = egui::Button::new(RichText::new(label).color(fg).small())
         .corner_radius(3.0)
         .fill(bg)
-        .stroke(egui::Stroke::new(1.0, if *enabled { Palette::ACCENT } else { Palette::SEPARATOR }));
+        .stroke(egui::Stroke::new(
+            1.0,
+            if *enabled {
+                Palette::ACCENT
+            } else {
+                Palette::SEPARATOR
+            },
+        ));
     if ui.add(btn).clicked() {
         *enabled = !*enabled;
     }

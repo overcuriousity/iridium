@@ -89,10 +89,11 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
 
   musl:
-    # Builds only the iridium binary for x86_64-unknown-linux-musl.
-    # The ewf crates are not yet in the binary's dependency graph (Phase 4),
-    # so no cross-compiled libewf is needed here.
-    name: Static musl build (binary only)
+    # Builds the pure-Rust library crates for x86_64-unknown-linux-musl to
+    # verify they remain statically linkable. iridium-app and the ewf crates
+    # are excluded because they link against system libewf, which has no
+    # musl-static package available; that constraint is accepted by design.
+    name: Static musl build (core libs)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -117,13 +118,12 @@ jobs:
           key: ${{ runner.os }}-musl-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-musl-
 
-      - name: Build iridium binary (musl)
-        run: cargo build --bin iridium --target x86_64-unknown-linux-musl
-
-      - name: Verify static binary
+      - name: Build core library crates (musl)
         run: |
-          BIN=target/x86_64-unknown-linux-musl/debug/iridium
-          file "$BIN"
-          ldd "$BIN" 2>&1 | grep -qE "not a dynamic executable|statically linked" \
-            && echo "OK: static binary" \
-            || (ldd "$BIN"; exit 1)
+          cargo build --target x86_64-unknown-linux-musl \
+            -p iridium-core \
+            -p iridium-hash \
+            -p iridium-audit \
+            -p iridium-device \
+            -p iridium-acquire \
+            -p iridium-recovery

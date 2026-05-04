@@ -15,7 +15,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                 .color(Palette::TEXT_STRONG),
         ));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button(icons::REFRESH).on_hover_text("Refresh device list").clicked() {
+            if ui
+                .button(icons::REFRESH)
+                .on_hover_text("Refresh device list")
+                .clicked()
+            {
                 state.refresh_devices();
             }
         });
@@ -77,11 +81,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         .striped(true)
         .resizable(true)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::initial(85.0).clip(true))   // Path
-        .column(Column::remainder().clip(true))      // Model
-        .column(Column::initial(90.0).clip(true))    // Size
-        .column(Column::initial(24.0))               // Type icon
-        .column(Column::initial(70.0))               // Flags
+        .column(Column::initial(85.0).clip(true)) // Path
+        .column(Column::remainder().clip(true)) // Model
+        .column(Column::initial(90.0).clip(true)) // Size
+        .column(Column::initial(24.0)) // Type icon
+        .column(Column::initial(70.0)) // Flags
         .header(header_height, |mut header| {
             header.col(|ui| {
                 if sort_header(ui, "Path", sort_col == DeviceCol::Path, sort_asc) {
@@ -98,10 +102,14 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                     sort_clicked = Some(DeviceCol::Size);
                 }
             });
-            header.col(|ui| { ui.label(""); });
-            header.col(|ui| { ui.label("Flags"); });
+            header.col(|ui| {
+                ui.label("");
+            });
+            header.col(|ui| {
+                ui.label("Flags");
+            });
         })
-        .body(|mut body| {
+        .body(|body| {
             body.rows(row_height, num_devices, |mut row| {
                 let display_idx = row.index();
                 let real_idx = sorted_idx[display_idx];
@@ -110,17 +118,21 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                 let (path, model_serial, size_str, type_icon, is_ro, has_hpa, has_dco) = {
                     let disk = &state.devices[real_idx];
                     let path = disk.path.to_string_lossy().into_owned();
-                    let model_serial = format!(
-                        "{} {}",
-                        disk.model.trim(),
-                        disk.serial.trim()
-                    );
+                    let model_serial = format!("{} {}", disk.model.trim(), disk.serial.trim());
                     let size_str = format_bytes(disk.size_bytes);
                     let type_icon = device_type_icon(disk);
                     let is_ro = disk.read_only;
                     let has_hpa = disk.hpa_size_bytes.is_some();
                     let has_dco = disk.dco_restricted;
-                    (path, model_serial, size_str, type_icon, is_ro, has_hpa, has_dco)
+                    (
+                        path,
+                        model_serial,
+                        size_str,
+                        type_icon,
+                        is_ro,
+                        has_hpa,
+                        has_dco,
+                    )
                 };
 
                 let is_selected = selected_idx == Some(real_idx);
@@ -137,7 +149,10 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                         new_selected = Some(real_idx);
                     }
                     resp.context_menu(|ui| {
-                        if ui.button(format!("{} Image this device…", icons::PLAY)).clicked() {
+                        if ui
+                            .button(format!("{} Image this device…", icons::PLAY))
+                            .clicked()
+                        {
                             new_selected = Some(real_idx);
                             open_job_form = Some(real_idx);
                             ui.close();
@@ -145,13 +160,18 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                     });
                 });
                 row.col(|ui| {
-                    ui.add(egui::Label::new(
-                        egui::RichText::new(&model_serial).color(Palette::TEXT_DIM),
-                    ).truncate());
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(&model_serial).color(Palette::TEXT_DIM),
+                        )
+                        .truncate(),
+                    );
                 });
                 row.col(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(egui::RichText::new(&size_str).font(egui::FontId::monospace(12.0)));
+                        ui.label(
+                            egui::RichText::new(&size_str).font(egui::FontId::monospace(12.0)),
+                        );
                     });
                 });
                 row.col(|ui| {
@@ -160,9 +180,15 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                 row.col(|ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
-                        if is_ro { theme::chip_info(ui, "RO"); }
-                        if has_hpa { theme::chip_warn(ui, "HPA"); }
-                        if has_dco { theme::chip_warn(ui, "DCO"); }
+                        if is_ro {
+                            theme::chip_info(ui, "RO");
+                        }
+                        if has_hpa {
+                            theme::chip_warn(ui, "HPA");
+                        }
+                        if has_dco {
+                            theme::chip_warn(ui, "DCO");
+                        }
                     });
                 });
             });
@@ -195,16 +221,24 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
     ui.add_space(2.0);
     let can_image = state.selected_device_idx.is_some();
     let btn = egui::Button::new(format!("{} Image…", icons::PLAY))
-        .fill(if can_image { Palette::ACCENT } else { Palette::SURFACE_ALT })
-        .stroke(egui::Stroke::new(1.0, if can_image { Palette::ACCENT } else { Palette::SEPARATOR }));
-    let btn_resp = ui.add_enabled(
-        can_image,
-        btn,
-    );
-    if btn_resp.clicked() {
-        if let Some(idx) = state.selected_device_idx {
-            prefill_job_form(state, idx);
-        }
+        .fill(if can_image {
+            Palette::ACCENT
+        } else {
+            Palette::SURFACE_ALT
+        })
+        .stroke(egui::Stroke::new(
+            1.0,
+            if can_image {
+                Palette::ACCENT
+            } else {
+                Palette::SEPARATOR
+            },
+        ));
+    let btn_resp = ui.add_enabled(can_image, btn);
+    if btn_resp.clicked()
+        && let Some(idx) = state.selected_device_idx
+    {
+        prefill_job_form(state, idx);
     }
 }
 
@@ -233,7 +267,9 @@ fn prefill_job_form(state: &mut AppState, idx: usize) {
 fn sort_header(ui: &mut Ui, label: &str, active: bool, asc: bool) -> bool {
     let text = if active {
         let arrow = if asc { " ↑" } else { " ↓" };
-        egui::RichText::new(format!("{label}{arrow}")).strong().color(Palette::ACCENT)
+        egui::RichText::new(format!("{label}{arrow}"))
+            .strong()
+            .color(Palette::ACCENT)
     } else {
         egui::RichText::new(label).color(Palette::TEXT_DIM)
     };
@@ -252,8 +288,14 @@ fn device_type_icon(disk: &Disk) -> &'static str {
 
 fn flag_sort_key(disk: &Disk) -> u8 {
     let mut k = 0u8;
-    if disk.read_only { k |= 1; }
-    if disk.hpa_size_bytes.is_some() { k |= 2; }
-    if disk.dco_restricted { k |= 4; }
+    if disk.read_only {
+        k |= 1;
+    }
+    if disk.hpa_size_bytes.is_some() {
+        k |= 2;
+    }
+    if disk.dco_restricted {
+        k |= 4;
+    }
     k
 }

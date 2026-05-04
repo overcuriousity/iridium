@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use egui::Ui;
 use egui_plot::{Line, Plot, PlotPoints};
 
@@ -13,14 +11,18 @@ pub fn show_active_tab(ui: &mut Ui, state: &mut crate::state::AppState) {
         // handle cancel button response afterwards.
         let cancelled = show_active_inner(ui, active);
         if cancelled {
-            state.active.as_ref().unwrap().cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            state
+                .active
+                .as_ref()
+                .unwrap()
+                .cancel
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             ui.ctx().request_repaint();
         }
     } else if !state.completed.is_empty() {
         ui.add_space(8.0);
         ui.label(
-            egui::RichText::new("No active job. See the Completed tab.")
-                .color(Palette::TEXT_DIM),
+            egui::RichText::new("No active job. See the Completed tab.").color(Palette::TEXT_DIM),
         );
     } else {
         ui.add_space(8.0);
@@ -37,16 +39,19 @@ fn show_active_inner(ui: &mut Ui, active: &ActiveJob) -> bool {
 
     // ── Header row ────────────────────────────────────────────────────────────
     ui.horizontal(|ui| {
-        ui.add(egui::Label::new(
-            egui::RichText::new(format!(
-                "{} {} → {}",
-                icons::DEVICE_HDD,
-                active.spec.source.path.display(),
-                active.spec.dest_path.display(),
-            ))
-            .font(egui::FontId::monospace(12.0))
-            .color(Palette::TEXT_STRONG),
-        ).truncate());
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(format!(
+                    "{} {} → {}",
+                    icons::DEVICE_HDD,
+                    active.spec.source.path.display(),
+                    active.spec.dest_path.display(),
+                ))
+                .font(egui::FontId::monospace(12.0))
+                .color(Palette::TEXT_STRONG),
+            )
+            .truncate(),
+        );
     });
 
     ui.add_space(4.0);
@@ -113,7 +118,11 @@ fn show_active_inner(ui: &mut Ui, active: &ActiveJob) -> bool {
             ui.add(egui::Label::new(
                 egui::RichText::new(format!("{mbps:.1} MB/s"))
                     .font(egui::FontId::monospace(12.0))
-                    .color(if mbps > 0.1 { Palette::ACCENT } else { Palette::TEXT_DIM }),
+                    .color(if mbps > 0.1 {
+                        Palette::ACCENT
+                    } else {
+                        Palette::TEXT_DIM
+                    }),
             ));
             ui.add(egui::Label::new(
                 egui::RichText::new(format_duration(eta_secs))
@@ -180,10 +189,7 @@ fn show_active_inner(ui: &mut Ui, active: &ActiveJob) -> bool {
                 .show_grid([false, true])
                 .label_formatter(|_, v| format!("{:.1} MB/s", v.y))
                 .show(ui, |plot_ui| {
-                    plot_ui.line(
-                        Line::new("MB/s", PlotPoints::new(points))
-                            .color(Palette::ACCENT),
-                    );
+                    plot_ui.line(Line::new("MB/s", PlotPoints::new(points)).color(Palette::ACCENT));
                 });
         }
     }
@@ -193,7 +199,11 @@ fn show_active_inner(ui: &mut Ui, active: &ActiveJob) -> bool {
         ui.collapsing("Recovery passes", |ui| {
             if p.total_bytes > 0 {
                 let frac = p.bytes_done as f32 / p.total_bytes as f32;
-                ui.label(egui::RichText::new(format!("Pass: {pass}")).small().color(Palette::TEXT_DIM));
+                ui.label(
+                    egui::RichText::new(format!("Pass: {pass}"))
+                        .small()
+                        .color(Palette::TEXT_DIM),
+                );
                 ui.add(
                     egui::ProgressBar::new(frac)
                         .desired_height(8.0)

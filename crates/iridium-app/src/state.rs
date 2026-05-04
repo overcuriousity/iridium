@@ -102,6 +102,7 @@ pub enum CentralTab {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(dead_code)]
 pub enum DeviceCol {
     #[default]
     Path,
@@ -220,8 +221,15 @@ impl AppState {
             selected_device_idx: None,
             inspector_mode: InspectorMode::DeviceDetail,
             central_tab: CentralTab::Active,
-            device_table: TableViewState { sort_col: DeviceCol::Path, sort_asc: true },
-            audit_filter: AuditFilter { text: String::new(), min_level: AuditLevel::Debug, follow_tail: true },
+            device_table: TableViewState {
+                sort_col: DeviceCol::Path,
+                sort_asc: true,
+            },
+            audit_filter: AuditFilter {
+                text: String::new(),
+                min_level: AuditLevel::Debug,
+                follow_tail: true,
+            },
             target_free_cache: None,
             file_dialog_slot: Arc::new(Mutex::new(None)),
             file_dialog_open: false,
@@ -258,7 +266,10 @@ impl AppState {
                     ProgressEvent::Started { total_bytes } => {
                         active.progress.total_bytes = total_bytes;
                     }
-                    ProgressEvent::Chunk { bytes_done, bad_chunks } => {
+                    ProgressEvent::Chunk {
+                        bytes_done,
+                        bad_chunks,
+                    } => {
                         active.progress.bytes_done = bytes_done;
                         active.progress.bad_chunks = bad_chunks;
                         active.progress.recovery_pass = None;
@@ -275,7 +286,11 @@ impl AppState {
                         let inst_bps = window_rate(&active.throughput_samples, 2);
                         active.ewma_bps = 0.2 * inst_bps + 0.8 * active.ewma_bps;
                     }
-                    ProgressEvent::VerifyProgress { bytes_done, total_bytes, .. } => {
+                    ProgressEvent::VerifyProgress {
+                        bytes_done,
+                        total_bytes,
+                        ..
+                    } => {
                         active.progress.verifying = true;
                         active.progress.total_bytes = total_bytes;
                         active.progress.verify_bytes_done = bytes_done;
@@ -283,7 +298,11 @@ impl AppState {
                     ProgressEvent::RecoveryPassStarted { pass } => {
                         active.progress.recovery_pass = Some(pass);
                     }
-                    ProgressEvent::RecoveryProgress { pass, finished_bytes, bad_bytes } => {
+                    ProgressEvent::RecoveryProgress {
+                        pass,
+                        finished_bytes,
+                        bad_bytes,
+                    } => {
                         active.progress.recovery_pass = Some(pass);
                         active.progress.bytes_done = finished_bytes;
                         active.progress.recovery_bad_bytes = bad_bytes;
@@ -291,7 +310,7 @@ impl AppState {
                     _ => {}
                 }
             }
-            active.handle.as_ref().map_or(false, |h| h.is_finished())
+            active.handle.as_ref().is_some_and(|h| h.is_finished())
         }; // release borrow on self.active before refresh
         self.refresh_audit_if_changed();
         finished
@@ -414,7 +433,12 @@ fn parse_audit_views(lines: &[String]) -> Vec<AuditView> {
                     .to_owned(),
                 _ => String::new(),
             };
-            Some(AuditView { ts, level, event, detail })
+            Some(AuditView {
+                ts,
+                level,
+                event,
+                detail,
+            })
         })
         .collect()
 }

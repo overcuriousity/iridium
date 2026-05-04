@@ -9,7 +9,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
     // ── Toolbar ───────────────────────────────────────────────────────────────
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(icons::AUDIT).color(Palette::TEXT_DIM));
-        ui.label(egui::RichText::new("Audit log").strong().color(Palette::TEXT_STRONG));
+        ui.label(
+            egui::RichText::new("Audit log")
+                .strong()
+                .color(Palette::TEXT_STRONG),
+        );
 
         if let Some(path) = &state.audit_path.clone() {
             ui.label(
@@ -17,19 +21,30 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                     .small()
                     .color(Palette::TEXT_DIM),
             );
-            if ui.small_button("Open folder").clicked() {
-                if let Some(parent) = path.parent() {
-                    let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
-                }
+            if ui.small_button("Open folder").clicked()
+                && let Some(parent) = path.parent()
+            {
+                let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
             }
         } else {
-            ui.label(egui::RichText::new("no active log").small().color(Palette::TEXT_DIM));
+            ui.label(
+                egui::RichText::new("no active log")
+                    .small()
+                    .color(Palette::TEXT_DIM),
+            );
         }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // Follow tail toggle
-            let tail_label = if state.audit_filter.follow_tail { "↓ Follow" } else { "⏸ Paused" };
-            if ui.selectable_label(state.audit_filter.follow_tail, tail_label).clicked() {
+            let tail_label = if state.audit_filter.follow_tail {
+                "↓ Follow"
+            } else {
+                "⏸ Paused"
+            };
+            if ui
+                .selectable_label(state.audit_filter.follow_tail, tail_label)
+                .clicked()
+            {
                 state.audit_filter.follow_tail = !state.audit_filter.follow_tail;
             }
 
@@ -45,10 +60,26 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
             egui::ComboBox::from_id_salt("audit_level_filter")
                 .selected_text(level_text)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut state.audit_filter.min_level, AuditLevel::Debug, "All");
-                    ui.selectable_value(&mut state.audit_filter.min_level, AuditLevel::Info, "INFO+");
-                    ui.selectable_value(&mut state.audit_filter.min_level, AuditLevel::Warn, "WARN+");
-                    ui.selectable_value(&mut state.audit_filter.min_level, AuditLevel::Error, "ERROR");
+                    ui.selectable_value(
+                        &mut state.audit_filter.min_level,
+                        AuditLevel::Debug,
+                        "All",
+                    );
+                    ui.selectable_value(
+                        &mut state.audit_filter.min_level,
+                        AuditLevel::Info,
+                        "INFO+",
+                    );
+                    ui.selectable_value(
+                        &mut state.audit_filter.min_level,
+                        AuditLevel::Warn,
+                        "WARN+",
+                    );
+                    ui.selectable_value(
+                        &mut state.audit_filter.min_level,
+                        AuditLevel::Error,
+                        "ERROR",
+                    );
                 });
 
             ui.add_space(4.0);
@@ -87,10 +118,10 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         .striped(true)
         .resizable(false)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::initial(72.0).clip(true))   // Timestamp
-        .column(Column::initial(52.0))              // Level
-        .column(Column::initial(140.0).clip(true))  // Event
-        .column(Column::remainder().clip(true));    // Detail
+        .column(Column::initial(72.0).clip(true)) // Timestamp
+        .column(Column::initial(52.0)) // Level
+        .column(Column::initial(140.0).clip(true)) // Event
+        .column(Column::remainder().clip(true)); // Detail
 
     if follow && n > 0 {
         table = table.scroll_to_row(n.saturating_sub(1), Some(egui::Align::BOTTOM));
@@ -104,35 +135,44 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                 });
             }
         })
-        .body(|mut body| {
+        .body(|body| {
             body.rows(18.0, n, |mut row| {
                 let view = visible[row.index()];
                 row.col(|ui| {
                     // Trim timestamp to HH:MM:SS if RFC3339
                     let ts_short = view.ts.get(11..19).unwrap_or(&view.ts);
-                    ui.add(egui::Label::new(
-                        egui::RichText::new(ts_short)
-                            .font(egui::FontId::monospace(10.0))
-                            .color(Palette::TEXT_DIM),
-                    ).truncate());
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(ts_short)
+                                .font(egui::FontId::monospace(10.0))
+                                .color(Palette::TEXT_DIM),
+                        )
+                        .truncate(),
+                    );
                 });
                 row.col(|ui| {
                     let (fg, bg) = level_colors(view.level);
                     theme::chip(ui, view.level.label(), fg, bg);
                 });
                 row.col(|ui| {
-                    ui.add(egui::Label::new(
-                        egui::RichText::new(&view.event)
-                            .font(egui::FontId::monospace(11.0))
-                            .color(Palette::TEXT_STRONG),
-                    ).truncate());
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(&view.event)
+                                .font(egui::FontId::monospace(11.0))
+                                .color(Palette::TEXT_STRONG),
+                        )
+                        .truncate(),
+                    );
                 });
                 row.col(|ui| {
-                    ui.add(egui::Label::new(
-                        egui::RichText::new(&view.detail)
-                            .font(egui::FontId::monospace(11.0))
-                            .color(Palette::TEXT_DIM),
-                    ).truncate());
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(&view.detail)
+                                .font(egui::FontId::monospace(11.0))
+                                .color(Palette::TEXT_DIM),
+                        )
+                        .truncate(),
+                    );
                 });
             });
         });

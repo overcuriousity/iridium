@@ -1,6 +1,6 @@
 // Post-acquire hash-verification pass.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use iridium_core::{HashAlg, ImageFormat};
 use iridium_hash::{Digest, new_hasher};
@@ -54,7 +54,7 @@ fn verify_raw(
 }
 
 fn verify_ewf(
-    dest_path: &PathBuf,
+    dest_path: &Path,
     algorithms: &[HashAlg],
     expected: &[Digest],
     mut progress_cb: impl FnMut(u64, u64),

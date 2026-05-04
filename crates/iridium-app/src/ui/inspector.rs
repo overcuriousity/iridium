@@ -20,10 +20,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
 fn show_device_detail(ui: &mut Ui, state: &mut AppState) {
     let Some(idx) = state.selected_device_idx else {
         ui.add_space(16.0);
-        ui.label(
-            egui::RichText::new("Select a device from the list")
-                .color(Palette::TEXT_DIM),
-        );
+        ui.label(egui::RichText::new("Select a device from the list").color(Palette::TEXT_DIM));
         return;
     };
 
@@ -31,12 +28,15 @@ fn show_device_detail(ui: &mut Ui, state: &mut AppState) {
 
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(icons::DEVICE_HDD).size(18.0));
-        ui.add(egui::Label::new(
-            egui::RichText::new(disk.path.to_string_lossy().as_ref())
-                .font(egui::FontId::monospace(13.0))
-                .strong()
-                .color(Palette::TEXT_STRONG),
-        ).truncate());
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(disk.path.to_string_lossy().as_ref())
+                    .font(egui::FontId::monospace(13.0))
+                    .strong()
+                    .color(Palette::TEXT_STRONG),
+            )
+            .truncate(),
+        );
     });
 
     ui.add_space(2.0);
@@ -81,7 +81,15 @@ fn show_device_detail(ui: &mut Ui, state: &mut AppState) {
                 },
             );
             kv(ui, "Removable", if disk.removable { "yes" } else { "no" });
-            kv(ui, "Read-only", if disk.read_only { "yes (write-blocker?)" } else { "no" });
+            kv(
+                ui,
+                "Read-only",
+                if disk.read_only {
+                    "yes (write-blocker?)"
+                } else {
+                    "no"
+                },
+            );
 
             if let Some(hpa) = disk.hpa_size_bytes {
                 ui.label(egui::RichText::new("HPA").color(Palette::WARN).strong());
@@ -146,11 +154,14 @@ fn show_device_detail(ui: &mut Ui, state: &mut AppState) {
 
 fn kv(ui: &mut Ui, key: &str, value: &str) {
     ui.label(egui::RichText::new(key).color(Palette::TEXT_DIM).small());
-    ui.add(egui::Label::new(
-        egui::RichText::new(value)
-            .font(egui::FontId::monospace(12.0))
-            .color(Palette::TEXT_STRONG),
-    ).truncate());
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(value)
+                .font(egui::FontId::monospace(12.0))
+                .color(Palette::TEXT_STRONG),
+        )
+        .truncate(),
+    );
     ui.end_row();
 }
 
@@ -200,11 +211,14 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new(icons::DEVICE_HDD));
-                        ui.add(egui::Label::new(
-                            egui::RichText::new(spec.source.path.to_string_lossy().as_ref())
-                                .font(egui::FontId::monospace(12.0))
-                                .strong(),
-                        ).truncate());
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(spec.source.path.to_string_lossy().as_ref())
+                                    .font(egui::FontId::monospace(12.0))
+                                    .strong(),
+                            )
+                            .truncate(),
+                        );
                     });
                     ui.label(
                         egui::RichText::new(format!(
@@ -221,17 +235,18 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
             section_heading(ui, "DESTINATION");
 
             // Check if file dialog just delivered a result
-            if let Ok(mut guard) = state.file_dialog_slot.try_lock() {
-                if let Some(path) = guard.take() {
-                    state.file_dialog_open = false;
-                    spec.dest_path = path;
-                }
+            if let Ok(mut guard) = state.file_dialog_slot.try_lock()
+                && let Some(path) = guard.take()
+            {
+                state.file_dialog_open = false;
+                spec.dest_path = path;
             }
 
             let file_dialog_open = state.file_dialog_open;
-            let browse_btn = egui::Button::new(
-                egui::RichText::new(format!("{} Browse…", icons::FOLDER_OPEN)),
-            )
+            let browse_btn = egui::Button::new(egui::RichText::new(format!(
+                "{} Browse…",
+                icons::FOLDER_OPEN
+            )))
             .stroke(egui::Stroke::new(1.0, Palette::SEPARATOR));
 
             if ui.add(browse_btn).clicked() && !file_dialog_open {
@@ -241,8 +256,8 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
                 let initial_dir = spec.source.path.parent().map(|p| p.to_path_buf());
                 let current_dest_path = spec.dest_path.clone();
                 std::thread::spawn(move || {
-                    let mut dialog = rfd::FileDialog::new()
-                        .set_title("Select output location (no extension)");
+                    let mut dialog =
+                        rfd::FileDialog::new().set_title("Select output location (no extension)");
                     if let Some(dir) = initial_dir {
                         dialog = dialog.set_directory(dir);
                     }
@@ -267,8 +282,8 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
                 spec.dest_path = PathBuf::from(&path_str);
             }
 
-            let dest_ok = !spec.dest_path.as_os_str().is_empty()
-                && spec.dest_path.parent().is_some();
+            let dest_ok =
+                !spec.dest_path.as_os_str().is_empty() && spec.dest_path.parent().is_some();
             if !dest_ok {
                 ui.horizontal(|ui| {
                     theme::chip_danger(ui, "REQUIRED");
@@ -294,10 +309,7 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
                 theme::segmented(
                     ui,
                     &mut spec.format,
-                    &[
-                        ("Raw", ImageFormat::Raw),
-                        ("EWF/E01", ImageFormat::Ewf),
-                    ],
+                    &[("Raw", ImageFormat::Raw), ("EWF/E01", ImageFormat::Ewf)],
                 );
             }
 
@@ -334,7 +346,11 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
             // Chunk size
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Chunk size").small().color(Palette::TEXT_DIM));
+                ui.label(
+                    egui::RichText::new("Chunk size")
+                        .small()
+                        .color(Palette::TEXT_DIM),
+                );
                 ui.add_space(4.0);
                 let mib = 1024 * 1024_usize;
                 let kib = 1024_usize;
@@ -398,14 +414,24 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
             let ready = !spec.algorithms.is_empty() && dest_ok;
             ui.horizontal(|ui| {
                 let start_btn = egui::Button::new(
-                    egui::RichText::new(format!("{} Queue job", icons::PLAY)).color(
-                        if ready { Palette::ACCENT_TEXT } else { Palette::TEXT_DIM },
-                    ),
+                    egui::RichText::new(format!("{} Queue job", icons::PLAY)).color(if ready {
+                        Palette::ACCENT_TEXT
+                    } else {
+                        Palette::TEXT_DIM
+                    }),
                 )
-                .fill(if ready { Palette::ACCENT } else { Palette::SURFACE_ALT })
+                .fill(if ready {
+                    Palette::ACCENT
+                } else {
+                    Palette::SURFACE_ALT
+                })
                 .stroke(egui::Stroke::new(
                     1.0,
-                    if ready { Palette::ACCENT } else { Palette::SEPARATOR },
+                    if ready {
+                        Palette::ACCENT
+                    } else {
+                        Palette::SEPARATOR
+                    },
                 ));
                 if ui.add_enabled(ready, start_btn).clicked() {
                     submit = true;

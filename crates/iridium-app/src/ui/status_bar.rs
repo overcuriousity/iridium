@@ -45,14 +45,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         // Target free space (cached 1s)
         if let Some(dest_dir) = dest_dir(state) {
             let now = Instant::now();
-            let stale = state
-                .target_free_cache
-                .as_ref()
-                .map_or(true, |(p, _, t)| p != &dest_dir || now.duration_since(*t) > Duration::from_secs(1));
-            if stale {
-                if let Ok(free) = free_bytes(&dest_dir) {
-                    state.target_free_cache = Some((dest_dir, free, now));
-                }
+            let stale = !state.target_free_cache.as_ref().is_some_and(|(p, _, t)| {
+                p == &dest_dir && now.duration_since(*t) <= Duration::from_secs(1)
+            });
+            if stale && let Ok(free) = free_bytes(&dest_dir) {
+                state.target_free_cache = Some((dest_dir, free, now));
             }
             if let Some((_, free, _)) = &state.target_free_cache {
                 ui.label(

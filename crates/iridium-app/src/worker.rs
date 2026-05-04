@@ -100,7 +100,9 @@ fn run_job(
 
     if !result.complete {
         seal_audit(audit);
-        return Ok(JobOutcome::Cancelled { bytes_done: result.bytes_processed });
+        return Ok(JobOutcome::Cancelled {
+            bytes_done: result.bytes_processed,
+        });
     }
 
     let verified = if spec.verify_after {
@@ -112,7 +114,10 @@ fn run_job(
             &spec.algorithms,
             &result.digests,
             move |done, total| {
-                let _ = tx.send(ProgressEvent::VerifyProgress { bytes_done: done, total_bytes: total });
+                let _ = tx.send(ProgressEvent::VerifyProgress {
+                    bytes_done: done,
+                    total_bytes: total,
+                });
             },
         ) {
             Ok(()) => true,
@@ -143,7 +148,9 @@ fn run_recovery_job(
     audit: Option<Arc<iridium_audit::Log>>,
 ) -> Result<JobOutcome, AppError> {
     // Seed total_bytes so the progress bar and ETA work from the first event.
-    let _ = progress_tx.send(ProgressEvent::Started { total_bytes: spec.source.size_bytes });
+    let _ = progress_tx.send(ProgressEvent::Started {
+        total_bytes: spec.source.size_bytes,
+    });
 
     let mut job = AcquireJob::new(
         spec.source.clone(),
@@ -172,7 +179,10 @@ fn run_recovery_job(
             &spec.algorithms,
             &result.digests,
             move |done, total| {
-                let _ = tx.send(ProgressEvent::VerifyProgress { bytes_done: done, total_bytes: total });
+                let _ = tx.send(ProgressEvent::VerifyProgress {
+                    bytes_done: done,
+                    total_bytes: total,
+                });
             },
         ) {
             Ok(()) => true,
@@ -189,12 +199,11 @@ fn run_recovery_job(
 }
 
 fn seal_audit(audit: Option<Arc<iridium_audit::Log>>) {
-    if let Some(arc) = audit {
-        if let Ok(log) = Arc::try_unwrap(arc) {
-            if let Err(e) = log.seal() {
-                log::warn!("audit seal failed: {e}");
-            }
-        }
+    if let Some(arc) = audit
+        && let Ok(log) = Arc::try_unwrap(arc)
+        && let Err(e) = log.seal()
+    {
+        log::warn!("audit seal failed: {e}");
     }
 }
 

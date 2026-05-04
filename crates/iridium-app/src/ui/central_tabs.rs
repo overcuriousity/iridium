@@ -20,13 +20,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
             } else {
                 text.color(Palette::TEXT_DIM)
             };
-            let btn = egui::Button::new(text)
-                .frame(false)
-                .stroke(if selected {
-                    egui::Stroke::new(0.0, Palette::ACCENT)
-                } else {
-                    egui::Stroke::NONE
-                });
+            let btn = egui::Button::new(text).frame(false).stroke(if selected {
+                egui::Stroke::new(0.0, Palette::ACCENT)
+            } else {
+                egui::Stroke::NONE
+            });
             if ui.add(btn).clicked() {
                 state.central_tab = tab;
             }

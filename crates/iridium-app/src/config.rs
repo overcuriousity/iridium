@@ -28,8 +28,7 @@ impl Default for Config {
 }
 
 fn config_path() -> Option<PathBuf> {
-    ProjectDirs::from("org", "iridium", "iridium")
-        .map(|pd| pd.config_dir().join("config.toml"))
+    ProjectDirs::from("org", "iridium", "iridium").map(|pd| pd.config_dir().join("config.toml"))
 }
 
 pub fn load() -> Config {
