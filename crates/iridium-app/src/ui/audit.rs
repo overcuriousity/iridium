@@ -21,7 +21,12 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                     .small()
                     .color(Palette::TEXT_DIM),
             );
-            if ui.small_button("Open folder").clicked()
+            let open_btn = egui::Button::new(
+                egui::RichText::new(format!("{} Open folder", icons::FOLDER_OPEN)).small(),
+            )
+            .fill(Palette::SURFACE)
+            .stroke(egui::Stroke::new(1.0, Palette::SEPARATOR));
+            if ui.add(open_btn).clicked()
                 && let Some(parent) = path.parent()
             {
                 let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
@@ -116,11 +121,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
 
     let mut table = TableBuilder::new(ui)
         .striped(true)
-        .resizable(false)
+        .resizable(true)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
         .column(Column::initial(72.0).clip(true)) // Timestamp
         .column(Column::initial(52.0)) // Level
-        .column(Column::initial(140.0).clip(true)) // Event
+        .column(Column::initial(160.0).clip(true)) // Event
         .column(Column::remainder().clip(true)); // Detail
 
     if follow && n > 0 {

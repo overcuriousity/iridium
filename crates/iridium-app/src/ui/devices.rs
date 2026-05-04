@@ -81,11 +81,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         .striped(true)
         .resizable(true)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::initial(85.0).clip(true)) // Path
-        .column(Column::remainder().clip(true)) // Model
-        .column(Column::initial(90.0).clip(true)) // Size
-        .column(Column::initial(24.0)) // Type icon
-        .column(Column::initial(70.0)) // Flags
+        .column(Column::initial(110.0).clip(true)) // Path
+        .column(Column::remainder().clip(true)) // Model / Serial
+        .column(Column::initial(80.0).clip(true)) // Size
+        .column(Column::initial(28.0)) // Type icon
+        .column(Column::initial(80.0)) // Flags
         .header(header_height, |mut header| {
             header.col(|ui| {
                 if sort_header(ui, "Path", sort_col == DeviceCol::Path, sort_asc) {
@@ -103,10 +103,10 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                 }
             });
             header.col(|ui| {
-                ui.label("");
+                ui.label(egui::RichText::new("Type").small().color(Palette::TEXT_DIM));
             });
             header.col(|ui| {
-                ui.label("Flags");
+                ui.label(egui::RichText::new("Flags").small().color(Palette::TEXT_DIM));
             });
         })
         .body(|body| {
@@ -220,20 +220,26 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
     ui.separator();
     ui.add_space(2.0);
     let can_image = state.selected_device_idx.is_some();
-    let btn = egui::Button::new(format!("{} Image…", icons::PLAY))
-        .fill(if can_image {
+    let btn = egui::Button::new(
+        egui::RichText::new(format!("{} Image…", icons::PLAY)).color(if can_image {
+            Palette::ACCENT_TEXT
+        } else {
+            Palette::TEXT_DIM
+        }),
+    )
+    .fill(if can_image {
+        Palette::ACCENT
+    } else {
+        Palette::SURFACE_ALT
+    })
+    .stroke(egui::Stroke::new(
+        1.0,
+        if can_image {
             Palette::ACCENT
         } else {
-            Palette::SURFACE_ALT
-        })
-        .stroke(egui::Stroke::new(
-            1.0,
-            if can_image {
-                Palette::ACCENT
-            } else {
-                Palette::SEPARATOR
-            },
-        ));
+            Palette::SEPARATOR
+        },
+    ));
     let btn_resp = ui.add_enabled(can_image, btn);
     if btn_resp.clicked()
         && let Some(idx) = state.selected_device_idx

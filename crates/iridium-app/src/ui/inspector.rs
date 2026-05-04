@@ -247,6 +247,7 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
                 "{} Browse…",
                 icons::FOLDER_OPEN
             )))
+            .fill(Palette::SURFACE)
             .stroke(egui::Stroke::new(1.0, Palette::SEPARATOR));
 
             if ui.add(browse_btn).clicked() && !file_dialog_open {
@@ -254,6 +255,11 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
                 let slot = Arc::clone(&state.file_dialog_slot);
                 let ctx = ui.ctx().clone();
                 let initial_dir = spec.dest_path.parent().map(|p| p.to_path_buf());
+                let stem = spec
+                    .dest_path
+                    .file_name()
+                    .map(|n| n.to_os_string())
+                    .unwrap_or_else(|| std::ffi::OsString::from("image"));
                 let current_dest_path = spec.dest_path.clone();
                 std::thread::spawn(move || {
                     // rfd with xdg-portal+tokio features requires a Tokio reactor.
@@ -263,14 +269,14 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
                         .expect("tokio rt");
                     let chosen = rt.block_on(async {
                         let mut dialog = rfd::AsyncFileDialog::new()
-                            .set_title("Select output location (no extension)");
+                            .set_title("Select output folder");
                         if let Some(dir) = initial_dir {
                             dialog = dialog.set_directory(dir);
                         }
                         dialog
-                            .save_file()
+                            .pick_folder()
                             .await
-                            .map(|fh| fh.path().to_path_buf())
+                            .map(|fh| fh.path().join(&stem))
                             .unwrap_or(current_dest_path)
                     });
                     *slot.lock().unwrap() = Some(chosen);
@@ -445,7 +451,10 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
                 if ui.add_enabled(ready, start_btn).clicked() {
                     submit = true;
                 }
-                if ui.button("Reset").clicked() {
+                let reset_btn = egui::Button::new("Reset")
+                    .fill(Palette::SURFACE)
+                    .stroke(egui::Stroke::new(1.0, Palette::SEPARATOR));
+                if ui.add(reset_btn).clicked() {
                     cancel_form = true;
                 }
             });
