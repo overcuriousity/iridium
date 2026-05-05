@@ -13,7 +13,7 @@ use iridium_recovery::RecoveryOptions;
 use crate::{
     error::AppError,
     state::{ActiveJob, AppState, JobOutcome, JobSpec, ProgressSnapshot},
-    verify,
+    verify::{self, VerifyOutcome},
 };
 
 /// Dequeue the next pending job and start its worker thread.
@@ -76,7 +76,7 @@ fn run_job(
         spec.algorithms.clone(),
     );
     job.chunk_size = spec.chunk_size;
-    job.cancel = cancel;
+    job.cancel = Arc::clone(&cancel);
     job.progress_tx = Some(progress_tx.clone());
     job.audit = audit.clone();
 
@@ -113,6 +113,7 @@ fn run_job(
             spec.format,
             &spec.algorithms,
             &result.digests,
+            &cancel,
             move |done, total| {
                 let _ = tx.send(ProgressEvent::VerifyProgress {
                     bytes_done: done,
@@ -120,7 +121,13 @@ fn run_job(
                 });
             },
         ) {
-            Ok(()) => true,
+            Ok(VerifyOutcome::Verified) => true,
+            Ok(VerifyOutcome::Cancelled) => {
+                seal_audit(audit);
+                return Ok(JobOutcome::Cancelled {
+                    bytes_done: result.bytes_processed,
+                });
+            }
             Err(e) => {
                 log::error!("verify failed: {e}");
                 seal_audit(audit);
@@ -153,7 +160,7 @@ fn run_recovery_job(
         spec.algorithms.clone(),
     );
     job.chunk_size = spec.chunk_size;
-    job.cancel = cancel;
+    job.cancel = Arc::clone(&cancel);
     job.progress_tx = Some(progress_tx.clone());
     job.audit = audit;
     // recovery always writes Raw
@@ -173,6 +180,7 @@ fn run_recovery_job(
             ImageFormat::Raw,
             &spec.algorithms,
             &result.digests,
+            &cancel,
             move |done, total| {
                 let _ = tx.send(ProgressEvent::VerifyProgress {
                     bytes_done: done,
@@ -180,7 +188,8 @@ fn run_recovery_job(
                 });
             },
         ) {
-            Ok(()) => true,
+            Ok(VerifyOutcome::Verified) => true,
+            Ok(VerifyOutcome::Cancelled) => false,
             Err(e) => {
                 log::error!("verify failed after recovery: {e}");
                 return Err(AppError::Verify(e));

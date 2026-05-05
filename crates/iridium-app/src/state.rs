@@ -246,7 +246,7 @@ impl AppState {
                 self.devices = d;
                 self.device_error = None;
                 self.selected_device_idx = None;
-                self.device_table = TableViewState::default();
+                // Preserve the user's current sort column/direction across refresh.
             }
             Err(e) => {
                 self.device_error = Some(e.to_string());
@@ -297,6 +297,11 @@ impl AppState {
                     }
                     ProgressEvent::RecoveryPassStarted { pass } => {
                         active.progress.recovery_pass = Some(pass);
+                        // Recovery doesn't emit ProgressEvent::Started, so seed
+                        // total_bytes from the source size on first pass.
+                        if active.progress.total_bytes == 0 {
+                            active.progress.total_bytes = active.spec.source.size_bytes;
+                        }
                     }
                     ProgressEvent::RecoveryProgress {
                         pass,
@@ -306,6 +311,21 @@ impl AppState {
                         active.progress.recovery_pass = Some(pass);
                         active.progress.bytes_done = finished_bytes;
                         active.progress.recovery_bad_bytes = bad_bytes;
+                        if active.progress.total_bytes == 0 {
+                            active.progress.total_bytes = active.spec.source.size_bytes;
+                        }
+
+                        let now = Instant::now();
+                        active.throughput_samples.push_back((now, finished_bytes));
+                        while let Some(&(t, _)) = active.throughput_samples.front() {
+                            if now.duration_since(t).as_secs() > 60 {
+                                active.throughput_samples.pop_front();
+                            } else {
+                                break;
+                            }
+                        }
+                        let inst_bps = window_rate(&active.throughput_samples, 2);
+                        active.ewma_bps = 0.2 * inst_bps + 0.8 * active.ewma_bps;
                     }
                     _ => {}
                 }
@@ -335,24 +355,48 @@ impl AppState {
             outcome,
             finished_at: std::time::SystemTime::now(),
         });
-        self.central_tab = CentralTab::Completed;
 
         if !self.pending.is_empty() {
+            // Queue handoff: keep the user on Active so the next job's progress
+            // is visible immediately. Switching to Completed here would make
+            // the queue look stalled until the user manually changes tabs.
             crate::worker::start_next(self, egui_ctx);
+            self.central_tab = CentralTab::Active;
+        } else {
+            self.central_tab = CentralTab::Completed;
         }
     }
 
     fn refresh_audit_if_changed(&mut self) {
         let Some(path) = &self.audit_path else { return };
         let current_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-        // Re-read on size *change* (not just growth), so a truncation/rotation
-        // (rare today, but possible if logs are ever rotated externally) does
-        // not leave the dock pinned to stale lines.
         if current_size == self.audit_file_size {
             return;
         }
-        self.audit_file_size = current_size;
         let path = path.clone();
+        // On growth, read only the new tail and append in place. This keeps the
+        // 100ms UI poll cheap on a damaged disk that emits many recovery_read_error
+        // entries — otherwise we'd repeatedly re-scan an O(file size) JSONL log.
+        if current_size > self.audit_file_size
+            && let Some(new_lines) = read_tail_from(&path, self.audit_file_size)
+        {
+            let new_views = parse_audit_views(&new_lines);
+            self.audit_lines.extend(new_lines);
+            self.audit_views.extend(new_views);
+            // Cap memory at last 400 lines/views.
+            if self.audit_lines.len() > 400 {
+                let drop = self.audit_lines.len() - 400;
+                self.audit_lines.drain(..drop);
+            }
+            if self.audit_views.len() > 400 {
+                let drop = self.audit_views.len() - 400;
+                self.audit_views.drain(..drop);
+            }
+            self.audit_file_size = current_size;
+            return;
+        }
+        // Truncation/rotation (or read failure) — fall back to a full re-read.
+        self.audit_file_size = current_size;
         let lines = tail_file(&path, 400);
         self.audit_views = parse_audit_views(&lines);
         self.audit_lines = lines;
@@ -377,6 +421,21 @@ fn window_rate(samples: &VecDeque<(Instant, u64)>, window_secs: u64) -> f64 {
         return 0.0;
     }
     last.1.saturating_sub(first.1) as f64 / dt
+}
+
+/// Read whole lines from `path` starting at byte `offset`. Returns `None` if
+/// the file cannot be opened or seeking past EOF.
+fn read_tail_from(path: &std::path::Path, offset: u64) -> Option<Vec<String>> {
+    use std::io::{BufRead, BufReader, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    f.seek(SeekFrom::Start(offset)).ok()?;
+    let reader = BufReader::new(f);
+    let lines: Vec<String> = reader
+        .lines()
+        .map_while(Result::ok)
+        .filter(|l| !l.is_empty())
+        .collect();
+    Some(lines)
 }
 
 fn tail_file(path: &std::path::Path, max_lines: usize) -> Vec<String> {

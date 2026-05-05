@@ -27,7 +27,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
         .striped(true)
         .resizable(false)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::initial(80.0).clip(true)) // When
+        .column(Column::initial(160.0).clip(true)) // When
         .column(Column::initial(90.0).clip(true)) // Source
         .column(Column::remainder().clip(true)) // Dest
         .column(Column::initial(80.0)) // Bytes
@@ -283,12 +283,15 @@ fn show_job_detail(ui: &mut Ui, job: &CompletedJob) {
 }
 
 fn format_when(t: &std::time::SystemTime) -> String {
-    let Ok(dur) = t.duration_since(std::time::UNIX_EPOCH) else {
-        return "—".to_owned();
-    };
-    let secs = dur.as_secs();
-    let h = (secs % 86400) / 3600;
-    let m = (secs % 3600) / 60;
-    let s = secs % 60;
-    format!("{h:02}:{m:02}:{s:02}")
+    // UTC date+time so jobs from different days remain distinguishable. The
+    // `time` crate is already in the workspace; falling back to a numeric
+    // unix-seconds rendering keeps the column populated if formatting ever
+    // fails (which it shouldn't for well-known descriptions).
+    let dt: time::OffsetDateTime = (*t).into();
+    let fmt =
+        match time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]Z") {
+            Ok(f) => f,
+            Err(_) => return "—".to_owned(),
+        };
+    dt.format(&fmt).unwrap_or_else(|_| "—".to_owned())
 }

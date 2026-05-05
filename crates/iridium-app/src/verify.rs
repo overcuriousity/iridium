@@ -1,6 +1,8 @@
 // Post-acquire hash-verification pass.
 
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use iridium_core::{HashAlg, ImageFormat};
 use iridium_hash::{Digest, new_hasher};
@@ -9,18 +11,28 @@ use crate::error::VerifyError;
 
 const VERIFY_CHUNK: usize = 1024 * 1024; // 1 MiB
 
+/// Outcome of a verify pass: `Verified` if digests matched, `Cancelled` if the
+/// cancel flag was set before completion. Mismatches and I/O errors return `Err`.
+#[derive(Debug, Clone, Copy)]
+pub enum VerifyOutcome {
+    Verified,
+    Cancelled,
+}
+
 /// `image_path` is the actual on-disk file: `<dest>.img` for Raw, `<dest>.E01`
-/// for EWF.
+/// for EWF. Polls `cancel` between chunk reads so the worker can be aborted
+/// without re-hashing the whole image.
 pub fn verify_image(
     image_path: &Path,
     format: ImageFormat,
     algorithms: &[HashAlg],
     expected: &[Digest],
+    cancel: &Arc<AtomicBool>,
     progress_cb: impl FnMut(u64, u64),
-) -> Result<(), VerifyError> {
+) -> Result<VerifyOutcome, VerifyError> {
     match format {
-        ImageFormat::Raw => verify_raw(image_path, algorithms, expected, progress_cb),
-        ImageFormat::Ewf => verify_ewf(image_path, algorithms, expected, progress_cb),
+        ImageFormat::Raw => verify_raw(image_path, algorithms, expected, cancel, progress_cb),
+        ImageFormat::Ewf => verify_ewf(image_path, algorithms, expected, cancel, progress_cb),
         ImageFormat::Aff => Err(VerifyError::Io(std::io::Error::other(
             "AFF format verify not implemented",
         ))),
@@ -31,8 +43,9 @@ fn verify_raw(
     path: &Path,
     algorithms: &[HashAlg],
     expected: &[Digest],
+    cancel: &AtomicBool,
     mut progress_cb: impl FnMut(u64, u64),
-) -> Result<(), VerifyError> {
+) -> Result<VerifyOutcome, VerifyError> {
     use std::io::Read;
     let mut file = std::fs::File::open(path)?;
     let total = file.metadata()?.len();
@@ -41,6 +54,9 @@ fn verify_raw(
     let mut done: u64 = 0;
 
     loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(VerifyOutcome::Cancelled);
+        }
         let n = file.read(&mut buf)?;
         if n == 0 {
             break;
@@ -52,15 +68,16 @@ fn verify_raw(
         progress_cb(done, total);
     }
 
-    check_digests(hashers, expected)
+    check_digests(hashers, expected).map(|()| VerifyOutcome::Verified)
 }
 
 fn verify_ewf(
     ewf_path: &Path,
     algorithms: &[HashAlg],
     expected: &[Digest],
+    cancel: &AtomicBool,
     mut progress_cb: impl FnMut(u64, u64),
-) -> Result<(), VerifyError> {
+) -> Result<VerifyOutcome, VerifyError> {
     let mut handle = iridium_ewf::EwfHandle::new()?;
     handle.open_read(&[ewf_path])?;
     let total = handle.media_size()?;
@@ -69,6 +86,10 @@ fn verify_ewf(
     let mut done: u64 = 0;
 
     loop {
+        if cancel.load(Ordering::Relaxed) {
+            handle.close()?;
+            return Ok(VerifyOutcome::Cancelled);
+        }
         let n = handle.read_buffer(&mut buf)?;
         if n == 0 {
             break;
@@ -81,7 +102,7 @@ fn verify_ewf(
     }
 
     handle.close()?;
-    check_digests(hashers, expected)
+    check_digests(hashers, expected).map(|()| VerifyOutcome::Verified)
 }
 
 fn check_digests(
@@ -127,7 +148,9 @@ mod tests {
         h.update(data);
         let expected = vec![h.finish()];
 
-        verify_raw(&path, &algs, &expected, |_, _| {}).unwrap();
+        let cancel = AtomicBool::new(false);
+        let outcome = verify_raw(&path, &algs, &expected, &cancel, |_, _| {}).unwrap();
+        assert!(matches!(outcome, VerifyOutcome::Verified));
     }
 
     #[test]
@@ -141,7 +164,24 @@ mod tests {
             hex: "0000000000000000000000000000000000000000000000000000000000000000".into(),
         }];
 
-        let err = verify_raw(&path, &algs, &bad, |_, _| {}).unwrap_err();
+        let cancel = AtomicBool::new(false);
+        let err = verify_raw(&path, &algs, &bad, &cancel, |_, _| {}).unwrap_err();
         assert!(matches!(err, VerifyError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn verify_raw_observes_cancel() {
+        // 8 MiB so multiple chunks are needed.
+        let data = vec![0u8; 8 * 1024 * 1024];
+        let (_dir, path) = make_raw_image(&data);
+
+        let algs = vec![HashAlg::Sha256];
+        let mut h = new_hasher(HashAlg::Sha256);
+        h.update(&data);
+        let expected = vec![h.finish()];
+
+        let cancel = AtomicBool::new(true); // pre-set so first iteration aborts
+        let outcome = verify_raw(&path, &algs, &expected, &cancel, |_, _| {}).unwrap();
+        assert!(matches!(outcome, VerifyOutcome::Cancelled));
     }
 }

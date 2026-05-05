@@ -49,8 +49,10 @@ impl eframe::App for IridiumApp {
             if let Some(spec) = self.state.pending_job_form.take() {
                 if let Some(parent) = spec.dest_path.parent() {
                     self.state.config.last_output_dir = Some(parent.to_path_buf());
-                    let _ = config::save(&self.state.config);
                 }
+                self.state.config.default_format = spec.format;
+                self.state.config.default_hash_algs = spec.algorithms.clone();
+                let _ = config::save(&self.state.config);
                 self.state.pending.push_back(spec);
                 self.state.show_job_form = false;
                 self.state.inspector_mode = crate::state::InspectorMode::DeviceDetail;

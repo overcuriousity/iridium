@@ -297,13 +297,27 @@ fn show_job_form(ui: &mut Ui, state: &mut AppState) {
                 spec.dest_path = PathBuf::from(&path_str);
             }
 
-            let dest_ok =
-                !spec.dest_path.as_os_str().is_empty() && spec.dest_path.parent().is_some();
-            if !dest_ok {
+            // Dest must be a base path with no extension — backends append
+            // .img / .E01 themselves. A typed extension would otherwise either
+            // make EWF validation fail or produce an unexpected filename.
+            let dest_empty =
+                spec.dest_path.as_os_str().is_empty() || spec.dest_path.parent().is_none();
+            let dest_has_ext = spec.dest_path.extension().is_some();
+            let dest_ok = !dest_empty && !dest_has_ext;
+            if dest_empty {
                 ui.horizontal(|ui| {
                     theme::chip_danger(ui, "REQUIRED");
                     ui.label(
                         egui::RichText::new("Output path is required")
+                            .small()
+                            .color(Palette::DANGER),
+                    );
+                });
+            } else if dest_has_ext {
+                ui.horizontal(|ui| {
+                    theme::chip_danger(ui, "INVALID");
+                    ui.label(
+                        egui::RichText::new("Drop the file extension — .img / .E01 is appended")
                             .small()
                             .color(Palette::DANGER),
                     );
