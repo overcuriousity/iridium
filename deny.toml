@@ -2,7 +2,7 @@
 targets = []
 
 [licenses]
-# Only allow GPL-3-compatible licenses in the dependency tree.
+# Allow permissive and GPL-3-compatible licenses in the dependency tree.
 allow = [
     "MIT",
     "Apache-2.0",
@@ -18,6 +18,14 @@ allow = [
     "CC0-1.0",
     "OpenSSL",
     "GPL-3.0-or-later",
+    # Permissive licenses pulled in transitively:
+    "0BSD",        # adler2
+    "Unlicense",   # memchr, walkdir, winapi-util, termcolor, byteorder-lite
+    # Font licenses from egui's bundled default fonts (epaint_default_fonts):
+    "OFL-1.1",         # SIL Open Font License — permissive for embedding
+    "Ubuntu-font-1.0", # Ubuntu Font Licence — permissive for embedding
+    # r-efi (UEFI bindings, optional transitive dep via winit on non-Linux):
+    "LGPL-2.1-or-later",
 ]
 
 [advisories]

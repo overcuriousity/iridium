@@ -12,11 +12,29 @@ name = "iridium"
 path = "src/main.rs"
 
 [dependencies]
-# egui/eframe added in Phase 7 when the GUI shell is implemented
 iridium-core     = { path = "../iridium-core" }
 iridium-device   = { path = "../iridium-device" }
 iridium-acquire  = { path = "../iridium-acquire" }
 iridium-audit    = { path = "../iridium-audit" }
-clap.workspace   = true
+iridium-recovery = { path = "../iridium-recovery" }
+iridium-hash     = { path = "../iridium-hash" }
+iridium-ewf      = { path = "../iridium-ewf" }
+egui.workspace        = true
+eframe.workspace      = true
+egui_extras.workspace = true
+egui_plot.workspace   = true
+egui-phosphor.workspace = true
+rfd.workspace         = true
+tokio.workspace       = true
+serde_json.workspace  = true
+libc.workspace        = true
 crossbeam-channel.workspace = true
 thiserror.workspace = true
+serde.workspace  = true
+log.workspace    = true
+time.workspace   = true
+toml.workspace   = true
+directories.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

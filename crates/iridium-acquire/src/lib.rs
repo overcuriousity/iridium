@@ -90,6 +90,8 @@ pub enum ProgressEvent {
         finished_bytes: u64,
         bad_bytes: u64,
     },
+    /// Emitted periodically during the post-acquire verify pass.
+    VerifyProgress { bytes_done: u64, total_bytes: u64 },
 }
 
 /// Outcome of a completed (or cancelled) acquisition.
