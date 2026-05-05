@@ -264,18 +264,27 @@ mod tests {
     #[test]
     fn raw_image_path_appends_img() {
         let s = spec_with("/case/evidence/image", ImageFormat::Raw);
-        assert_eq!(image_file_path(&s), PathBuf::from("/case/evidence/image.img"));
+        assert_eq!(
+            image_file_path(&s),
+            PathBuf::from("/case/evidence/image.img")
+        );
     }
 
     #[test]
     fn ewf_image_path_appends_e01() {
         let s = spec_with("/case/evidence/image", ImageFormat::Ewf);
-        assert_eq!(image_file_path(&s), PathBuf::from("/case/evidence/image.E01"));
+        assert_eq!(
+            image_file_path(&s),
+            PathBuf::from("/case/evidence/image.E01")
+        );
     }
 
     #[test]
     fn audit_path_replaces_extension() {
         let s = spec_with("/case/evidence/image", ImageFormat::Raw);
-        assert_eq!(audit_path_for(&s), PathBuf::from("/case/evidence/image.jsonl"));
+        assert_eq!(
+            audit_path_for(&s),
+            PathBuf::from("/case/evidence/image.jsonl")
+        );
     }
 }
